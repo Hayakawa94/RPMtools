@@ -618,7 +618,6 @@ KT_plot_ave = function(n, ft,actual,pred, challenger,weight,factor_name,title,re
 # reticulate::py_run_file("H:\\Restricted Share\\DA P&U\\Tech Modelling\\Users\\Khoa\\RPMtools.py") # Compute SHAP and interactions
 
 # Must compute SHAP using the .py file above before plotting them
-
 KT_plot_shap = function(sv, ft,ft_name,excl){
   
   if (! missing(excl)){
@@ -629,23 +628,32 @@ KT_plot_shap = function(sv, ft,ft_name,excl){
     df = data.frame(sv,ft)
   }
   
-  df  %>%
-    arrange(ft) %>%
-    ggplot(.,aes(x=ft, y=sv  )) +geom_point(alpha= 0.3, size = 2, colour = "blue"  , fill = "blue", stroke = NA)+
-    # theme_gray(base_size = 13)+
-    theme_bw() +theme(panel.background = element_blank())+
-    theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9))+
-    xlab(ft_name)+
-    ylab("shap_values")+
-    ggtitle(glue("{ft_name} SHAP trend")) -> p 
-  
-  if (is.numeric(ft)){
-      p + geom_smooth( method = "loess",span = 0.3, se= F, show.legend = FALSE) -> p 
+  if (!is.numeric(ft)){
+    df  %>%
+      arrange(ft) %>%
+      ggplot(.,aes(x=ft, y=sv  )) +geom_point(alpha= 0.3, size = 2, colour = "blue"  , fill = "blue", stroke = NA)+
+      # theme_gray(base_size = 13)+
+      theme_bw() +theme(panel.background = element_blank())+
+      theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9))+
+      xlab(ft_name)+
+      ylab("shap_values")+
+      ggtitle(glue("{ft_name} SHAP trend")) -> p 
+  }else{
+    df  %>%
+      arrange(ft) %>%
+      mutate(lowess = lowess(x = ft,y=sv, f = 1/15)$y)  %>%
+      ggplot(.,aes(x=ft, y=sv  )) +geom_point(alpha= 0.3, size = 2, colour = "blue"  , fill = "blue", stroke = NA)+
+      # theme_gray(base_size = 13)+
+      theme_bw() +theme(panel.background = element_blank())+
+      theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9))+
+      geom_line(aes(x=  ft , y = lowess ),lwd = 1)+
+      xlab(ft_name)+
+      ylab("shap_values")+
+      ggtitle(glue("{ft_name} SHAP trend")) -> p 
   }
   
   return(p)
 }
-
 
 
 KT_plot_shap_w_interaction =  function(sv, ft,ft_name,excl,interaction){
@@ -1136,8 +1144,9 @@ KT_target_cat_encoding_map = function(x, dict ){
 }
 
 KT_target_cat_encoding_inverse_map = function(x, dict ){
-  x %>% map_chr(~dict[.x])
+  x %>% map_chr(~ as.character(dict[.x]))
 }
+
 
 
 KT_get_df_na = function(df){
