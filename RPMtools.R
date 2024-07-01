@@ -629,32 +629,23 @@ KT_plot_shap = function(sv, ft,ft_name,excl){
     df = data.frame(sv,ft)
   }
   
-  if (!is.numeric(ft)){
-    df  %>%
-      arrange(ft) %>%
-      ggplot(.,aes(x=ft, y=sv  )) +geom_point(alpha= 0.3, size = 1.5, colour = "blue"  , fill = "blue")+
-      # theme_gray(base_size = 13)+
-      theme_bw() +theme(panel.background = element_blank())+
-      theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9))+
-      xlab(ft_name)+
-      ylab("shap_values")+
-      ggtitle(glue("{ft_name} SHAP trend")) -> p 
-  }else{
-    df  %>%
-      arrange(ft) %>%
-      mutate(lowess = lowess(x = ft,y=sv, f = 1/15)$y)  %>%
-      ggplot(.,aes(x=ft, y=sv  )) +geom_point(alpha= 0.3, size = 1.5, colour = "blue"  , fill = "blue")+
-      # theme_gray(base_size = 13)+
-      theme_bw() +theme(panel.background = element_blank())+
-      theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9))+
-      geom_line(aes(x=  ft , y = lowess ),lwd = 1)+
-      xlab(ft_name)+
-      ylab("shap_values")+
-      ggtitle(glue("{ft_name} SHAP trend")) -> p 
+  df  %>%
+    arrange(ft) %>%
+    ggplot(.,aes(x=ft, y=sv  )) +geom_point(alpha= 0.3, size = 2, colour = "blue"  , fill = "blue", stroke = NA)+
+    # theme_gray(base_size = 13)+
+    theme_bw() +theme(panel.background = element_blank())+
+    theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9))+
+    xlab(ft_name)+
+    ylab("shap_values")+
+    ggtitle(glue("{ft_name} SHAP trend")) -> p 
+  
+  if (is.numeric(ft)){
+      p + geom_smooth( method = "loess",span = 0.3, se= F, show.legend = FALSE) -> p 
   }
   
   return(p)
 }
+
 
 
 KT_plot_shap_w_interaction =  function(sv, ft,ft_name,excl,interaction){
@@ -668,7 +659,7 @@ KT_plot_shap_w_interaction =  function(sv, ft,ft_name,excl,interaction){
   df  %>% 
     group_by(interaction)%>%
     arrange(ft) %>%
-    ggplot(.,aes(x=ft, y=sv  , colour = interaction )) +geom_point( alpha= 0.3, size = 1.5 )+
+    ggplot(.,aes(x=ft, y=sv  , colour = interaction )) +geom_point( alpha= 0.3, size = 1.5 , stroke = NA)+
     # scale_color_viridis_c()  +
     theme_bw() +theme(panel.background = element_blank())+
     # theme_gray(base_size = 13)+
@@ -690,9 +681,9 @@ KT_plot_compare_shap = function(sv_base,sv_challenger , base_ft, challenger_ft,f
   df  %>%
     group_by(scenario) %>%
     arrange(ft) %>%
-    mutate(lowess = lowess(x = ft,y=sv)$y)  %>%
+    mutate(lowess = lowess(x = ft,y=sv, f = 1/15)$y)  %>%
     ggplot(.,aes(x=ft, y=sv , group = scenario, colour = scenario) ) +
-    geom_point(alpha= 0.1, size = 1.5 ,stroke=0.5,shape = 21)+
+    geom_point(alpha= 0.1, size = 1.5 ,stroke=NA,shape = 21)+
     # theme_gray(base_size = 13)+
     theme_bw() +theme(panel.background = element_blank())+
     theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9))+
