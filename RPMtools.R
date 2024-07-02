@@ -1024,7 +1024,7 @@ KT_xgb_explain = function(model,  pred_data ,excl ,sample_size = 23000){
   shap_main_effect =   predict(model, newdata =pred_data_main_effect, predcontrib = TRUE)  %>% as.data.frame()
   
   for (x in names(shap_main_effect)){
-    shap_main_effect[,x] = KT_quantile_clip(shap_main_effect[,x], min = 0.01,max = 0.99)
+    shap_main_effect[,x] = KT_quantile_clip(shap_main_effect[,x], min = 0.001,max = 0.999)
   }
     
   set.seed(33)
