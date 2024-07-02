@@ -683,23 +683,41 @@ KT_plot_shap_w_interaction =  function(sv, ft,ft_name,excl,interaction){
 
 KT_plot_compare_shap = function(sv_base,sv_challenger , base_ft, challenger_ft,ft_name){
   
+  
   df_base = data.frame(sv=sv_base,ft = base_ft , scenario = "base")
   df_challenger = data.frame(sv=sv_challenger,ft = challenger_ft,scenario = "challenger")
   df = rbind(df_base,df_challenger)
-  df  %>%
-    group_by(scenario) %>%
-    arrange(ft) %>%
-    mutate(lowess = lowess(x = ft,y=sv, f = 1/15)$y)  %>%
-    ggplot(.,aes(x=ft, y=sv , group = scenario, colour = scenario) ) +
-    geom_point(alpha= 0.1, size = 1.5 ,stroke=NA,shape = 21)+
-    # theme_gray(base_size = 13)+
-    theme_bw() +theme(panel.background = element_blank())+
-    theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9))+
-    geom_line(aes(x=  ft , y = lowess , group  = scenario , color  = scenario ),lwd = 1,linetype = 1)+
-    scale_colour_manual(values=c('blue','red'))+
-    xlab(ft_name)+
-    ylab("shap_values")+
-    ggtitle(glue("{ft_name} SHAP trend"))
+  if (!is.numeric(ft)){
+    df  %>%
+      group_by(scenario) %>%
+      arrange(ft) %>%
+      ggplot(.,aes(x=ft, y=sv , group = scenario, colour = scenario) ) +
+      geom_point(alpha= 0.1, size = 1.5 ,stroke=NA,shape = 21)+
+      # theme_gray(base_size = 13)+
+      theme_bw() +theme(panel.background = element_blank())+
+      theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9))+
+      scale_colour_manual(values=c('blue','red'))+
+      xlab(ft_name)+
+      ylab("shap_values")+
+      ggtitle(glue("{ft_name} SHAP trend"))-> p}
+  else{
+    df  %>%
+      group_by(scenario) %>%
+      arrange(ft) %>%
+      mutate(lowess = lowess(x = ft,y=sv, f = 1/15)$y)  %>%
+      ggplot(.,aes(x=ft, y=sv , group = scenario, colour = scenario) ) +
+      geom_point(alpha= 0.1, size = 1.5 ,stroke=NA,shape = 21)+
+      # theme_gray(base_size = 13)+
+      theme_bw() +theme(panel.background = element_blank())+
+      theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9))+
+      geom_line(aes(x=  ft , y = lowess , group  = scenario , color  = scenario ),lwd = 1,linetype = 1)+
+      scale_colour_manual(values=c('blue','red'))+
+      xlab(ft_name)+
+      ylab("shap_values")+
+      ggtitle(glue("{ft_name} SHAP trend"))-> p
+  }
+  return(p)
+
 }
 
 ########################################## UK Map #################################################
