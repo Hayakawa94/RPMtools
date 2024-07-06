@@ -1377,6 +1377,7 @@ KT_plot_factor_dist = function(df ,cols_to_plot ){
   return(dist_list)
 }
 
+KT_print = function(x){print(cat(glue::glue(x)))}
 
 ## tab plot example 
 # AVE on unseen data  {.tabset .tabset-pills}
