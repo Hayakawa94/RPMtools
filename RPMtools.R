@@ -28,6 +28,16 @@ library(xgboost)
 library(caret)
 library(Matrix)
 library(magrittr)
+library(sf)
+library(RColorBrewer)
+library(cartogram)
+library(tmap)
+library(spdep)
+library(ggplot2)
+library(deldir)
+library(sp)
+library(purrr)
+library(geodaData)
 
 # library(SHAPforxgboost)
 # con <- dbConnect(odbc::odbc(), "AUTOSQL02" ,database = "MISAnalystDB")
@@ -731,7 +741,7 @@ KT_prepare_uk_lookup_map = function(){
           "district"="(([A-Z][A-Z]{0,1})[0-9][A-Z0-9]{0,1})" ,
           "sector"="((([A-Z][A-Z]{0,1})[0-9][A-Z0-9]{0,1}) {0,}[0-9])",
           "postcode"= "^(((([A-Z][A-Z]{0,1})[0-9][A-Z0-9]{0,1}) {0,}[0-9])[A-Z]{2})$")
-  postcode = data.table::fread("H:/Restricted Share/DA P&U/Tech Modelling/Users/Khoa/ukpostcodes/ukpostcodes.csv")# we have NI in this file.
+  postcode = data.table::fread("H:/Restricted Share/DA P&U/Tech Modelling/Users/Khoa/RPMtools/ukpostcodes.csv")# we have NI in this file.
   for (dummy in c("area","district","sector" )){
     lookup_poly  = postcode %>% filter(!is.na(longitude)) %>%
       mutate(name =stringr::str_extract(postcode ,lvl[dummy])  ) %>%
@@ -744,10 +754,10 @@ KT_prepare_uk_lookup_map = function(){
     postcode_lookup_poly[[dummy]] = lookup_poly
     postcode_lookup_geometry[[dummy]] = lookup_geo
     postcode_regex[[dummy]] = lvl[dummy]
-    postcode_lookup_shp[[dummy]] = read_sf(glue("H:\\Restricted Share\\DA P&U\\Tech Modelling\\Users\\Khoa\\UK-postcode-boundaries-Jan-2015\\Distribution\\{dummy}s.shp") )}
+    postcode_lookup_shp[[dummy]] = read_sf(glue("H:/Restricted Share/DA P&U/Tech Modelling/Users/Khoa/RPMtools/Distribution/{dummy}s.shp") )}
     
-  return(list(postcode_lookup_poly=postcode_lookup_poly,
-              postcode_lookup_geometry=postcode_lookup_geometry,
+  return(list(postcode_lookup_lonlat=postcode_lookup_poly,
+              postcode_lookup_point=postcode_lookup_geometry,
               postcode_lookup_shp = postcode_lookup_shp,
               postcode_regex=postcode_regex))
 }
