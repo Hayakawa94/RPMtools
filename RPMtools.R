@@ -1,3 +1,16 @@
+list.of.packages <- c('tidyverse',	'odbc',	'dbplyr',	'data.table',	'CatEncoders',	'glue',	'plotly',	
+                      'htmltools',	'dplyr',	'sf',	'gridExtra',	'tidyr',	'lubridate',	'reshape2',	
+                      'reticulate',	'ggplot2',	'ParBayesianOptimization',	'mlbench',	'recipes',	
+                      'resample',	'xgboost',	'caret',	'Matrix',	'magrittr' ,"data.table", "rmarkdown","pracma",
+                      "RColorBrewer","cartogram","tmap","spdep","ggplot2","deldir","sp","purrr","RCurl")
+
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+
+if (length(new.packages) > 0) {
+  install.packages(new.packages)
+}
+
+
 # Validation tools
 knitr::opts_chunk$set(
   warning = F, # show warnings
