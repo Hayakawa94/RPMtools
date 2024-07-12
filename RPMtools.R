@@ -2,7 +2,7 @@ list.of.packages <- c('tidyverse',	'odbc',	'dbplyr',	'data.table',	'CatEncoders'
                       'htmltools',	'dplyr',	'sf',	'gridExtra',	'tidyr',	'lubridate',	'reshape2',	
                       'reticulate',	'ggplot2',	'ParBayesianOptimization',	'mlbench',	'recipes',	
                       'resample',	'xgboost',	'caret',	'Matrix',	'magrittr' ,"data.table", "rmarkdown","pracma",
-                      "RColorBrewer","cartogram","tmap","spdep","ggplot2","deldir","sp","purrr","RCurl")
+                      "RColorBrewer","cartogram","tmap","spdep","ggplot2","deldir","sp","purrr","RCurl","DescTools")
 
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
 
@@ -50,7 +50,8 @@ library(ggplot2)
 library(deldir)
 library(sp)
 library(purrr)
-library(geodaData)
+library(DescTools)
+# library(geodaData)
 
 # library(SHAPforxgboost)
 # con <- dbConnect(odbc::odbc(), "AUTOSQL02" ,database = "MISAnalystDB")
@@ -1137,7 +1138,8 @@ KT_xgb_explain = function(model,  pred_data ,excl ,sample_size = 23000){
 # exe_path = "C:/Program Files (x86)/Radar_4_21/RadarCommandLine.exe"
 # component_path = "RadarLive_Phoenix1Home.Endcodingmodellingdata.encoded_factor"
 # rdr_path = "H:/Restricted Share/DA P&U/Tech Modelling/01 Home/Phase 2/13. R/Peril Name - Radar Home - Phase2 Modelling WorkFlow  v7.rdr"
-KT_rdr_cmd= function(exe_path="C:/Program Files (x86)/Radar_4_21/RadarCommandLine.exe", rdr_path, component_path,use_optimiser = F, stdout=F){
+KT_rdr_cmd= function(exe_path="C:/Program Files/Radar_4_23/RadarCommandLine.exe", rdr_path, component_path,use_optimiser = F, stdout=F, stderr = F ){
+  
   exe_path = glue('&"{exe_path}"')
   rdr_path = glue('"{rdr_path}"')
   component_path = glue('/target:"{component_path}" ')
@@ -1152,7 +1154,8 @@ KT_rdr_cmd= function(exe_path="C:/Program Files (x86)/Radar_4_21/RadarCommandLin
   system2("powershell" , 
           input  = input , 
           args = c( "-executionPolicy", "Bypass"),
-          stdout=stdout)
+          stdout=stdout,
+          stderr = stderr)
 }
 
 
@@ -1171,23 +1174,13 @@ KT_target_cat_encoding  = function(cat_df , target, weight ){
       summarise_all(list(sum))  %>% 
       mutate(w_avg =target/ weight) %>%
       arrange(w_avg)    %>% 
-      mutate(idx = seq(1,nrow(.))) -> agg_df
-    dict[[x]] = setNames(agg_df$idx,agg_df[[x]])
-    inverse_dict[[x]] = setNames(agg_df[[x]],agg_df$idx)
+      mutate(idx = seq(1,nrow(.))) %>%
+      select(x, idx )-> agg_df
+  
   }
   
-  return(list(dict=dict,
-              inverse_dict = inverse_dict))
+  return(agg_df)
 }
-
-KT_target_cat_encoding_map = function(x, dict ){
-  x  %>% map_dbl(~dict[.x])
-}
-
-KT_target_cat_encoding_inverse_map = function(x, dict ){
-  x %>% map_chr(~ as.character(dict[.x]))
-}
-
 
 
 KT_get_df_na = function(df){
@@ -1266,7 +1259,8 @@ KT_compare_dist_banded_factors = function(df1,df2,suffix, common_cols) {
     test = p1 %>% full_join(p2,by =ft , suffix =suffix  )%>%
       reshape2::melt(id.vars =ft ) %>%  
       arrange(!!as.name(ft))
-    lvls <- stringr::str_sort(unique(test[,ft]), numeric = TRUE)
+    # lvls <- stringr::str_sort(unique(test[,ft]), numeric = TRUE)
+    lvl = DescTools::SortMixed(unique(test[,ft]))
     test[,ft] <- factor(test[,ft], levels = lvls)
     
     plots[[ft]]= test %>%  ggplot(.,aes(x=!!as.name(ft) , group = variable, fill = variable, y = value)) + 
@@ -1353,7 +1347,8 @@ KT_plot_factor_dist = function(df ,cols_to_plot ){
   for (x in  cols_to_plot ){
     i= i+1
     if (!is.numeric(df[,x])){
-      lvls <- stringr::str_sort(unique(df[,x]), numeric = TRUE)
+      # lvls <- stringr::str_sort(unique(df[,x]), numeric = TRUE)
+      lvls <- DescTools::SortMixed(unique(df[,x]))
       df[,x] <- factor(df[,x], levels = lvls)
       p = df %>% count(!!as.name(x)) %>%
         mutate(prop= n/sum(n)) %>% 
@@ -1378,6 +1373,29 @@ KT_plot_factor_dist = function(df ,cols_to_plot ){
 }
 
 KT_print = function(x){print(cat(glue::glue(x)))}
+KT_dym_sort <- function(my_vector){
+  my_vector <- DescTools::SortMixed(my_vector %>% as.character(.))
+  # Initialize empty vectors
+  starts_with_lt <- character(0)
+  other_strings <- character(0)
+  
+  # Iterate over each string
+  for (s in my_vector) {
+    if (startsWith(s, "<") && !grepl(">", s)) {
+      starts_with_lt <- c(starts_with_lt, s)
+    } else {
+      other_strings <- c(other_strings, s)
+    }
+  }
+  
+  # Combine the vectors
+  sorted_vector <- c(starts_with_lt, other_strings)
+  
+  # Print the sorted vector
+  return(sorted_vector)
+  
+  
+}
 
 ## tab plot example 
 # AVE on unseen data  {.tabset .tabset-pills}
