@@ -2,7 +2,7 @@ list.of.packages <- c('tidyverse',	'odbc',	'dbplyr',	'data.table',	'CatEncoders'
                       'htmltools',	'dplyr',	'sf',	'gridExtra',	'tidyr',	'lubridate',	'reshape2',	
                       'reticulate',	'ggplot2',	'ParBayesianOptimization',	'mlbench',	'recipes',	
                       'resample',	'xgboost',	'caret',	'Matrix',	'magrittr' ,"data.table", "rmarkdown","pracma",
-                      "RColorBrewer","cartogram","tmap","spdep","ggplot2","deldir","sp","purrr","RCurl","DescTools")
+                      "RColorBrewer","cartogram","tmap","spdep","ggplot2","deldir","sp","purrr","RCurl","DescTools","readxl","openxlsx")
 
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
 
@@ -51,6 +51,8 @@ library(deldir)
 library(sp)
 library(purrr)
 library(DescTools)
+library(readxl)
+library(openxlsx)
 # library(geodaData)
 
 # library(SHAPforxgboost)
@@ -471,18 +473,136 @@ KT_calc_ave = function(ft,actual,pred,challenger, weight){
   challenger =   challenger*(sum(actual)/sum(challenger*weight )) # rebase
   df = data.frame(ft,actual,pred,challenger,weight )
   df %>% 
-    mutate_at(vars(c("pred", "challenger")) , ~.x*weight) %>%
-    group_by(ft) %>%
+    mutate_at(vars(c("pred", "challenger")) , ~.x*weight) -> df
+  df  %>% select(-ft) %>%
+    summarise_all(list(sum))  %>%
+    mutate(actual_overall_avg = actual/weight,
+                                               pred_overall_avg = pred/weight , 
+                                               challenger_overall_avg = challenger/weight) ->overall
+   df %>%  group_by(ft) %>%
     summarise_all(list(sum)) %>%
     mutate(actual=actual/weight,
            pred=pred/weight,
            challenger=challenger/weight,
            ave = actual/pred,
-           challenger_ave = actual/challenger
+           challenger_ave = actual/challenger,
+           actual_overall_avg = overall$actual_overall_avg,
+           pred_overall_avg = overall$pred_overall_avg,
+           actual_overall_avg = overall$actual_overall_avg
+           
     ) -> df
   return(df)
   
 }
+
+KT_calc_ave_consistency_random_fold<- function(ft , actual , pred, weight, challener,nfold=5,plot_scale =5000){
+  
+  
+  KT_create_fold_idx(data.frame(ft),nfold) ->folds
+  folds[["Full"]] <- unlist(folds) %>% as.vector()
+  AvE_df_list = list()
+  
+  
+  for(fold in names(folds)){
+    
+    KT_calc_ave(ft =ft[folds[[fold]]],
+                actual = actual[folds[[fold]]],
+                pred =pred[folds[[fold]]] , 
+                weight= weight[folds[[fold]]] ) %>%
+      mutate(sample = fold)->AvE_df_list[[fold]]
+  }
+  rbindlist(AvE_df_list) -> ave_df
+  ave_df$sample = factor( ave_df$sample , levels = KT_dym_sort(unique(ave_df$sample)))
+  ave_df %>% arrange(ft) %>% 
+      group_by(ft) %>% mutate(ub = max(ave) , lb = min(ave)) %>%
+    ungroup() %>%
+    mutate(ub = ifelse(grepl("fold",sample) , 1.75 , ub),
+           lb = ifelse(grepl("fold",sample) , 0.25 , lb),
+           bar_group = ifelse(grepl("fold",sample) , "fold" , "full"))->ave_df
+  
+  ggplotly(ave_df %>% ggplot(.,aes(x=ft,group = sample , fill = bar_group))+
+             geom_hline(yintercept = 1,color = '#39ff14')+
+             geom_line(aes(y = ave,color = sample))+
+             geom_line(aes(y = lb, group = bar_group ), color = "grey", lwd = 0.5)+
+             geom_line(aes(y = ub , group=bar_group  ), color = "grey", lwd = 0.5)+
+             geom_bar( aes(y=weight/plot_scale), stat="identity", size=.1, alpha=.4 , position = "dodge") +
+             scale_fill_manual(values=c( "fold" = "grey" ,"full"= "orange"))+
+             scale_y_continuous(name = "Actual/Expected",sec.axis = sec_axis(~.*plot_scale, name="weight")) +
+             theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9))+
+             annotate("text" , x = 1.5, y = 1.77,label = "y=1.75") +
+             annotate("text", x=1.5 , y = 0.27,label= "y=0.25")
+           
+             ) -> p
+  i=1
+  suppressMessages(
+  
+  for (fold  in names(folds)){
+    i=i+1
+    if (fold == "Full"){
+      style(p , data = ave_df$sample=="Full" ,traces = i ,line = list(width = 3.5, color = 'orange'  ), marker= list(color = "orange" , size = 11))->p
+      
+    }else{
+      style(p , data = ave_df$sample==fold ,traces = i ,line = list(width = 2, color = 'grey', dash = "dash" ), marker= list(color = "grey" , size = 7))->p
+    }
+    
+  })
+  
+  return(list(ave_df = ave_df,
+              ave_plot = p))
+  
+}
+
+
+KT_calc_ave_consistency_factor<- function(ft , actual , pred, weight, challenger,factor_consistency,plot_scale =5000, rebase= F){
+  if (missing(challenger)){
+    challenger = pred
+  }
+  df = data.frame(ft = ft, actual = actual, pred = pred , weight = weight , challenger = challenger , factor_consistency = factor_consistency)
+  
+  if(rebase){
+    df %>% 
+      group_by(factor_consistency) %>% 
+      mutate(weighted_pred = pred*weight) %>% 
+      select(weighted_pred,weight,actual) %>% 
+      summarise_all(list(sum)) %>% 
+      mutate(rb_factor = actual/weighted_pred) %>% 
+      ungroup() %>% 
+      select(factor_consistency,rb_factor ) -> rb_factor
+    
+    df %>% left_join(rb_factor , by = "factor_consistency") %>% mutate(pred = pred*rb_factor) ->df
+  } else{
+    rb_factor = NULL
+  }
+  split(df,f=factor_consistency) ->split_df
+  AvE_df_list = list()
+  for(fold in names(split_df)){
+    
+    KT_calc_ave(ft =split_df[[fold]]$ft,
+                actual = split_df[[fold]]$actual,
+                pred =split_df[[fold]]$pred , 
+                weight= split_df[[fold]]$weight ) %>%
+      mutate(sample = fold)->AvE_df_list[[fold]]
+  }
+  rbindlist(AvE_df_list) -> ave_df
+
+  
+  ggplotly(ave_df %>% mutate(sample = as.numeric(sample)) %>% ggplot(.,aes(x=ft,group = sample , fill = sample))+
+                  geom_hline(yintercept = 1,color = '#39ff14')+
+                  geom_point(aes(y = ave,color = sample))+
+                  geom_line(aes(y = ave,color = sample))+ scale_color_gradient(low = "yellow", high = "red")+
+                 geom_bar( aes(y=weight/plot_scale), stat="identity", size=.1, alpha=.4 , position = "dodge") + scale_fill_gradient(low = "yellow", high = "red")+
+                 scale_y_continuous(name = "Actual/Expected",sec.axis = sec_axis(~.*plot_scale, name="weight")) +
+                 theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9))
+           
+  ) -> p
+  
+  return(list(ave_df = ave_df,
+              ave_plot = p,
+              rebase_data = rb_factor))
+  
+}
+
+
 KT_resample_ave = function( n, ft,actual,pred, challenger,weight) {
   if (missing(challenger)){
     challenger = pred
@@ -897,7 +1017,7 @@ KT_xgb_train <- function(train ,
 KT_create_fold_idx <- function(df,k){
   folds = list()
   for(i in 1:k){
-    folds[[i]] <-as.integer(seq(i,nrow(df),by = k))
+    folds[[glue("fold{i}")]] <-as.integer(seq(i,nrow(df),by = k))
   }
   return(folds)
 }
@@ -1159,6 +1279,266 @@ KT_rdr_cmd= function(exe_path="C:/Program Files/Radar_4_23/RadarCommandLine.exe"
 }
 
 
+KT_rdr_glm_lookup<-function(file_path){
+  options(digits=10)
+  print("loading glm lookup")
+  # options(readxl.show_progress = FALSE)
+  # file_path = "glm_lookup.xlsx"
+  getNamedRegions(file_path) -> GLM_named_region
+  range_map = list()
+  for (x in 1:length(GLM_named_region)){
+    range_map[[GLM_named_region[x]]] <- attr(GLM_named_region, "position")[x]
+  }
+  relativities_orig_list  = list()
+  relativities_list = list()
+  lkup_keys = list()
+  level_list = list()
+  interacted_levels = list()
+  relativities_list$Base =  as.numeric(names(read.xlsx(file_path,  namedRegion = "Base")))
+  score_cols=names(range_map)[! names(range_map) %in% c("Base" , "Base_1" , "LinkType")]
+  pb = txtProgressBar(min = 0, max = length(score_cols), initial = 0 , style = 3)
+  i=0
+  
+  for (x in score_cols){
+    i=i+1
+    cell = range_map[[x]]
+    str_split(cell,":") -> cell_split
+    
+    cell_address = cellranger::as.cell_addr(cell_split[[1]][1], strict = FALSE)
+    paste(cellranger::num_to_letter(cell_address$col-1) ,cell_address$row-1, sep = "") -> newcell
+    paste( newcell, cell_split[[1]][2],sep = ":") -> new_range 
+    rel = read_xlsx(file_path ,range= new_range ,.name_repair = "unique_quiet") 
+    if(ncol(rel) <=2){
+      names(rel)<-c(x,"value")
+    }
+    colnames(rel)[1]<-x
+    lvl =  rel[,x][[1]]
+    rel[,x] = factor(rel[,x][[1]],levels =lvl)
+    relativities_orig_list[[x]]<-rel
+    if(ncol(rel) >2){
+      interacted_levels[[x]] = KT_find_groups_of_identical_columns(rel %>% select(2:ncol(rel)))
+      interaction = str_split(x , pattern = "_x_")
+      rel %>% melt(id.var = x) -> rel
+      names(rel)<- c(interaction[[1]] , "value")
+    }
+    rel$pred_at_base = rel$value * relativities_list$Base
+    relativities_list[[x]]<- rel
+    lkup_keys[[x]] = names(rel)[!names(rel) %in% c("value","pred_at_base")]
+    level_list[[x]] <- lvl
+    
+    setTxtProgressBar(pb,i)
+    
+  }
+  
+  
+  
+  
+  fts = c()
+  for (x in names(relativities_list)){
+    if (str_detect(x,"_x_")){
+      ft = str_split(x , "_x_")
+      fts = c(fts,ft)
+    }
+    
+  }
+  fts = unique(c(unlist(fts) , names(relativities_list)))
+  
+  return(list(lookup_table = relativities_list ,
+              lookup_table_orig =relativities_orig_list,
+              factors = fts,
+              factor_lvl = level_list,
+              lkup_keys = lkup_keys,
+              interacted_levels=interacted_levels))
+  options(digits=10)
+  
+}
+
+
+KT_rdr_glm_predict <- function(glm_model_path, pred_df){
+  
+  KT_rdr_glm_lookup(glm_model_path) -> model
+  print("Scoring data")
+  pred_df %>% select(ends_with(model$factors)) %>% mutate_all(~as.factor(.))->pred_df
+  score_cols = names(model$lookup_table)[names(model$lookup_table) != "Base"]
+  pb = txtProgressBar(min = 0, max = length(score_cols), initial = 0 , style = 3)
+  i=0
+  for(x in  score_cols){
+    i=i+1
+    pred_df[[glue("{x}_relativity")]] = pred_df %>% left_join(model$lookup_table[[x]] , by = model$lkup_keys[[x]]  ) %>% select(value) %>% pull
+    setTxtProgressBar(pb,i)
+  }
+  pred_df$Base_relativity = model$lookup_table$Base
+  pred_df$R_pred =  apply(pred_df %>% select(ends_with("_relativity" )), 1,prod)
+  return(pred_df)
+}
+
+
+KT_plot_glm_fit <- function( df , xlsx_path, plot_scale = 4000 ){
+  # options(warn=-1)
+  print("Processing glm fitted trends")
+  # ft = "AD_InsurerCode"
+  # xlsx_path = "glm_lookup.xlsx"
+  
+  model = KT_rdr_glm_lookup(xlsx_path)
+  KT_plot_glm_rdr_rel(xlsx_path) ->rel_plots
+  KT_rdr_glm_predict(xlsx_path , pred_df = df )-> pred 
+  df$R_pred  = pred$R_pred  
+  
+  fitted_fts = c(intersect(model$factors , names(df)) , names(rel_plots)[grepl("_x_", names(rel_plots))])
+  missing_fts= setdiff(model$factors , names(df))
+  fit_plots  = list()
+  print(glue("{missing_fts} missing"))
+  
+  pb = txtProgressBar(min = 0, max = length(fitted_fts), initial = 0 , style = 3)
+  i=0
+  print("Plot emblem like analysis")
+  for (ft in fitted_fts){
+    i=i+1
+    if (str_detect(ft,"_x_")){
+      p = rel_plots[[ft]]
+    }else{
+      ave_calc = function(sample){
+        KT_calc_ave(ft =  df %>% filter(chosendatasplits ==sample ) %>% select(ft) %>% pull , 
+                    actual = df %>% filter(chosendatasplits == sample)  %>% mutate(actual = Response*Weight)%>% select(actual  ) %>% pull,
+                    pred = df %>% filter(chosendatasplits == sample) %>% select(R_pred) %>% pull,
+                    weight =  df %>% filter(chosendatasplits == sample)  %>% select(Weight  ) %>% pull) 
+      }
+      ave_calc("Modelling") ->ave_df_modelling
+      ave_calc("Validation") ->ave_df_validation
+      
+      ave_df = ave_df_modelling %>% left_join(ave_df_validation, by = "ft" , suffix = c("", "_validation") )
+      
+      if (ft %in% names(model$factor_lvl)){
+        ave_df$ft =factor(ave_df$ft , levels = model$factor_lvl[[ft]] ) 
+      }else{
+        
+        ave_df %>% mutate_all(~ifelse(grepl("Default|default|DEFAULT|Unknown|unknown|UNKNOWN|unkwn" ,.) ,"ZZZDefault" , . )) -> ave_df
+        
+        ave_df$ft =factor(ave_df$ft , levels = KT_dym_sort(my_vector =ave_df$ft  ) )  
+        levels(ave_df$ft)[levels(ave_df$ft) =="ZZZDefault"] <- 'Default'
+      }
+      
+      rescale_ = plot_scale
+      
+      ave_df%>% arrange(ft) %>% right_join(model$lookup_table[[ft]] , join_by(ft ==!!as.name(ft) )) %>%  
+        mutate(CU = value * ave,
+               CM = value,
+               CA = pred/pred_overall_avg,
+               obs =actual/actual_overall_avg,
+               CU_validation = value * ave_validation,
+               CA_validation = pred_validation/pred_overall_avg_validation,
+               obs_validation =actual_validation/actual_overall_avg_validation) %>%
+        select(ft, CM,CU,CA,obs,CU_validation,CA_validation,obs_validation, weight, weight_validation) %>%
+        melt( id.vars = c("ft" , "weight", "weight_validation")) %>%
+        mutate(weight = case_when(grepl("_validation" , variable) ~ weight_validation ,
+                                  variable == "CM" ~ 0,
+                                  T~weight),
+               sampling = ifelse(grepl("_validation" , variable) , "validation" , "modelling")) %>%
+        select( - weight_validation)->ave_df_melted
+      
+      
+      
+      
+      ggplot(ave_df_melted,aes(x = ft  , group = variable ,color = variable, fill= variable ,  y = value))+ 
+        geom_line() +
+        # geom_point()+
+        geom_bar( aes(y=weight/rescale_), stat="identity", size=.1, alpha=.4 , position = "dodge") +
+        scale_fill_manual(values=c( "CU" = "orange" , "CA" = "green" , "obs" ='#da14ff' ,"CU_validation" = "orange" , "CA_validation" = "green" , "obs_validation" ='#da14ff' ))+
+        scale_y_continuous(name = "Relativity",sec.axis = sec_axis(~.*rescale_, name="weight")) +
+        theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9))+
+        xlab(ft) -> p
+      
+      
+      suppressMessages(
+        
+        plotly::ggplotly(p)   %>% style(data=ave_df_melted[ave_df_melted$variable=="CM",], traces = 1  ,  line = list(width = 3.5, color = '#39ff14' ), marker= list(color = "#39ff14" , size = 11))  %>%
+          style(data=ave_df_melted[ave_df_melted$variable=="CU",], traces = 2 ,  line = list(width = 3.5, color = 'orange') ,  marker= list(color = "orange" , size = 11)) %>%
+          style(data=ave_df_melted[ave_df_melted$variable=="CU_valdation",], traces = 5 ,  line = list(width = 2, color = 'orange', dash = "dash") ,  marker= list(color = "orange" , size = 7))  %>%
+          style(data=ave_df_melted[ave_df_melted$variable=="CA",], traces = 3 ,  line = list(width = 3.5, color = 'green') ,  marker= list(color = "green" , size = 11)) %>%
+          style(data=ave_df_melted[ave_df_melted$variable=="CA_valdation",], traces =6 ,  line = list(width = 2, color = 'green', dash = "dash") ,  marker= list(color = "green" , size = 7))  %>%
+          style(data=ave_df_melted[ave_df_melted$variable=="CA",], traces = 4 ,  line = list(width = 3.5, color = '#da14ff') ,  marker= list(color = "#da14ff" , size = 11)) %>%
+          style(data=ave_df_melted[ave_df_melted$variable=="CA_valdation",], traces =7 ,  line = list(width = 2, color = '#da14ff', dash = "dash") ,  marker= list(color = "#da14ff" , size = 7)) ->p)
+    }
+    
+    
+    
+    
+    fit_plots[[ft]]<- p
+    setTxtProgressBar(pb,i)
+  }
+  
+  return(fit_plots)
+  
+}
+
+
+KT_plot_glm_rdr_rel = function(xlsx_path){
+  model = KT_rdr_glm_lookup(xlsx_path)
+  rel_plots = list()
+  options(digits = 5)
+  for( rel in names(model$lookup_table)[names(model$lookup_table)!="Base"]){
+    lookup_table = model$lookup_table[[rel]]
+    lookup_table$value =round(lookup_table$value,5)
+    if(str_detect(rel,"_x_")){
+      x1 = names(lookup_table)[1]
+      x2 = names(lookup_table)[2]
+      interaction = T
+      p = lookup_table %>% 
+        ggplot(.,aes(x = !!as.name(x1) , y = value, group =!!as.name( x2) , color =!!as.name(x2)))+
+        geom_line() + 
+        geom_point()+
+        theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9)) +
+        ylab("Relativity")
+      p2 = lookup_table %>% 
+        ggplot(.,aes(x =!!as.name( x2) , y = value, group = !!as.name(x1) , color =!!as.name(x1)))+
+        geom_line() + 
+        geom_point()+
+        theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9))+
+        ylab("Relativity")
+      rel_plots[[glue("{x1}_x_{x2}")]] <- ggplotly(p)
+      rel_plots[[glue("{x2}_x_{x1}")]] <- ggplotly( p2)
+    } else{
+      rel_plots[[rel]] <- ggplotly( lookup_table %>% ggplot(.,aes(x=!!as.name(rel) , y = value, group = 1))+ 
+                                      geom_line() + 
+                                      geom_point() +
+                                      theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9) ) +
+                                      ylab("Relativity"))
+    }
+  }
+  return(rel_plots)
+}
+
+
+
+
+KT_find_groups_of_identical_columns <- function(df) {
+  groups <- list()
+  
+  for (col in names(df)) {
+    in_group <- sapply(groups, function(g) col %in% g)
+    if (!any(in_group)) {
+      identical_cols <- names(df)[sapply(df, function(x) identical(df[[col]], x))]
+      
+      if (length(identical_cols) <2){
+        group_name = identical_cols
+      }else{
+        group_name = paste(identical_cols[1] , identical_cols[length(identical_cols)],sep = "_to_" )
+      }
+      
+      groups[[ group_name]] <- identical_cols
+    }
+  }
+
+  lookup = c()
+  value = c()
+  
+  for (group in names(groups)){
+    lookup = c(lookup , rep(group,  length(groups[[group]]) ))
+    value = c(value, groups[[group]] )
+  }
+  lookup_table = data.table(lookup,value)
+  return(lookup_table)
+}
 ###################################Useful tools###############################
 
 KT_target_cat_encoding  = function(cat_df , target, weight ){
