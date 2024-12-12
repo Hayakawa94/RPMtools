@@ -2,7 +2,8 @@ list.of.packages <- c('tidyverse',	'odbc',	'dbplyr',	'data.table',	'CatEncoders'
                       'htmltools',	'dplyr',	'sf',	'gridExtra',	'tidyr',	'lubridate',	'reshape2',	
                       'reticulate',	'ggplot2',	'ParBayesianOptimization',	'mlbench',	'recipes',	
                       'resample',	'xgboost',	'caret',	'Matrix',	'magrittr' ,"data.table", "rmarkdown","pracma",
-                      "RColorBrewer","cartogram","tmap","spdep","ggplot2","deldir","sp","purrr","RCurl","DescTools","readxl","openxlsx")
+                      "RColorBrewer","cartogram","tmap","spdep","ggplot2","deldir","sp","purrr","RCurl","DescTools",
+                      "readxl","openxlsx", "fastglm", "janitor", "doParallel","dtplyr","EIX","DALEX" , "pbapply", "patchwork","shiny" , "writexl","shiny.exe")
 
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
 
@@ -12,11 +13,12 @@ if (length(new.packages) > 0) {
 
 
 # Validation tools
-knitr::opts_chunk$set(
-  warning = F, # show warnings
-  message = F, # show messages
-  echo = F  # show R code
-)
+# knitr::opts_chunk$set(
+#   warning = F, # show warnings
+#   message = F, # show messages
+#   echo = F  # show R code
+# )
+library(tictoc)
 library(tidyverse)
 library(odbc)
 library(dbplyr)
@@ -35,10 +37,10 @@ library(reticulate)
 library(ggplot2)
 library(ParBayesianOptimization)
 library(mlbench)
-library(recipes)
+# library(recipes)
 library(resample)
 library(xgboost)
-library(caret)
+# library(caret)
 library(Matrix)
 library(magrittr)
 library(sf)
@@ -53,6 +55,13 @@ library(purrr)
 library(DescTools)
 library(readxl)
 library(openxlsx)
+library(fastglm)
+library(dtplyr)
+library(pbapply)
+library(patchwork)
+library(shiny)
+library(writexl)
+library(shiny.exe)
 # library(geodaData)
 
 # library(SHAPforxgboost)
@@ -61,7 +70,9 @@ library(openxlsx)
 # snapshot1 <- con  %>% tbl(in_schema("dbo" , "GenericBackfill_2018Partial"))
 # snapshot2 <- con  %>% tbl(in_schema("dbo" , "GenericBack"))
 
-
+# con <- dbConnect(drv = odbc() , dsn = "azure_db")
+# test <- con  %>% tbl(in_schema("da_pricing" , "pbi_phoenixvansalesall"))
+# dbWriteTable(conn = con , DBI::SQL( "hive_metastore.da_pricing.modelling_data_p2") ,dataset,  overwrite = TRUE )
 options(scipen=999)
 
 
@@ -464,13 +475,17 @@ KT_plot_tl = function(n, actual, weight, base  , challenger ,challenger2  , nbin
 
 ################################ AvE ###################################
 
-KT_calc_ave = function(ft,actual,pred,challenger, weight){
+KT_calc_ave = function(ft,actual,pred,challenger, weight, rebase = T){
   
   if (missing(challenger)){
     challenger = pred
   }
-  pred =   pred*(sum(actual)/sum(pred*weight )) # rebase
-  challenger =   challenger*(sum(actual)/sum(challenger*weight )) # rebase
+  
+  if(rebase){
+    pred =   pred*(sum(actual)/sum(pred*weight )) # rebase
+    challenger =   challenger*(sum(actual)/sum(challenger*weight )) # rebase
+  }
+
   df = data.frame(ft,actual,pred,challenger,weight )
   df %>% 
     mutate_at(vars(c("pred", "challenger")) , ~.x*weight) -> df
@@ -557,6 +572,7 @@ KT_calc_ave_consistency_factor<- function(ft , actual , pred, weight, challenger
   if (missing(challenger)){
     challenger = pred
   }
+  factor_consistency = factor(factor_consistency, levels =KT_dym_sort(unique(factor_consistency)))
   df = data.frame(ft = ft, actual = actual, pred = pred , weight = weight , challenger = challenger , factor_consistency = factor_consistency)
   
   if(rebase){
@@ -580,19 +596,22 @@ KT_calc_ave_consistency_factor<- function(ft , actual , pred, weight, challenger
     KT_calc_ave(ft =split_df[[fold]]$ft,
                 actual = split_df[[fold]]$actual,
                 pred =split_df[[fold]]$pred , 
-                weight= split_df[[fold]]$weight ) %>%
+                weight= split_df[[fold]]$weight ,
+                rebase = F) %>%
       mutate(sample = fold)->AvE_df_list[[fold]]
   }
   rbindlist(AvE_df_list) -> ave_df
 
   
-  ggplotly(ave_df %>% mutate(sample = as.numeric(sample)) %>% ggplot(.,aes(x=ft,group = sample , fill = sample))+
+  ggplotly(ave_df %>% ggplot(.,aes(x=ft,group = sample , fill = sample))+
                   geom_hline(yintercept = 1,color = '#39ff14')+
                   geom_point(aes(y = ave,color = sample))+
-                  geom_line(aes(y = ave,color = sample))+ scale_color_gradient(low = "yellow", high = "red")+
-                 geom_bar( aes(y=weight/plot_scale), stat="identity", size=.1, alpha=.4 , position = "dodge") + scale_fill_gradient(low = "yellow", high = "red")+
+                  geom_line(aes(y = ave,color = sample))+
+             # scale_color_gradient(low = "yellow", high = "red")+
+                 geom_bar( aes(y=weight/plot_scale), stat="identity", size=.1, alpha=.4 , position = "dodge") + 
                  scale_y_continuous(name = "Actual/Expected",sec.axis = sec_axis(~.*plot_scale, name="weight")) +
-                 theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9))
+                 theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9) )+
+             ylab("Actual/Expected")
            
   ) -> p
   
@@ -889,6 +908,8 @@ KT_prepare_uk_lookup_map = function(){
     postcode_lookup_geometry[[dummy]] = lookup_geo
     postcode_regex[[dummy]] = lvl[dummy]
     postcode_lookup_shp[[dummy]] = read_sf(glue("H:/Restricted Share/DA P&U/Tech Modelling/Users/Khoa/RPMtools/Distribution/{dummy}s.shp") )}
+  
+  postcode_lookup_poly[["postcode"]] = postcode %>% select(-id) %>% rename(name = postcode)
     
   return(list(postcode_lookup_lonlat=postcode_lookup_poly,
               postcode_lookup_point=postcode_lookup_geometry,
@@ -958,9 +979,9 @@ KT_plot_uk_map = function(df,value, title, size,group = NA, alpha =0.5 ,nrow = 1
 # registerDoSEQ()
 
 
-KT_xgb_train <- function(train ,
-                         train_y ,
-                         train_weight ,
+KT_xgb_train <- function(train , # train data including fts only
+                         train_y , # 100%/75% pred of section  or total
+                         train_weight , # rep(1 , nrow(pred_df))
                          validate ,
                          validate_y ,
                          validate_weight,
@@ -1060,71 +1081,82 @@ KT_xgb_baysian_tune = function(train ,
                                validate_weight,
                                folds,
                                bounds,
+                               HP_fixed=list(),
                                nrounds= 400,
+                               monotonicity_constraints,
+                               interaction_constraints,
                                objective = "reg:tweedie",
                                eval_metric = "tweedie-nloglik@1.5",
                                parallel = F,
                                iters.k = 1,
                                iters.n = 4,
+                               ncluster  =  max(floor(detectCores()*2/3),1),
                                initPoints=10,
                                verbose=1){
+
+
+  gc()
+  
   
   if(missing(folds)){
     cv = FALSE
+    cluster_obj <- c('train' , "train_y" , "train_weight", "validate", "validate_y" ,  "validate_weight" , "bounds" , "nrounds" ,"objective", "eval_metric" , "monotonicity_constraints" , "interaction_constraints")
   }
   else{
     cv= T
+    
+    cluster_obj <- c('train' , "train_y" , "train_weight", "bounds" , "nrounds" ,"objective", "eval_metric" ,"folds", "monotonicity_constraints" , "interaction_constraints")
   }
   
   
+  if(parallel){
+    
+    library(doParallel)
+    cl <- makeCluster(ncluster)
+    registerDoParallel(cl)
+    clusterExport(cl, cluster_obj, envir = environment())
+    clusterEvalQ(cl,expr= {
+      library(xgboost)
+      source("//gmsfile01/data$/Restricted Share/DA P&U/Tech Modelling/Users/Khoa/RPMtools/RPMtools.R")
+      library(tidyverse)
+    })
+  }else{
+    iters.k=1
+  }
   
-  obj_fun <- function(eta,
-                      # nrounds,
-                      max_depth, 
-                      min_child_weight, 
-                      subsample, 
-                      colsample_bytree,
-                      lambda ,
-                      alpha
-                      ) {
+  obj_fun <- function(eta, ...) {
     
-    params = list(eta=eta,
-                  nrounds=nrounds,
-                  max_depth=max_depth, 
-                  min_child_weight=min_child_weight, 
-                  subsample=subsample, 
-                  colsample_bytree=colsample_bytree, 
-                  lambda=lambda,
-                  alpha=alpha,
-                  # lambda=1,
-                  # alpha=0,
-                  objective=objective,
-                  eval_metric=eval_metric)
+    params <- list(eta = eta,
+                   objective = objective,
+                   eval_metric = eval_metric,
+                   monotonicity_constraints=monotonicity_constraints,
+                   interaction_constraints=interaction_constraints,
+                   nrounds =nrounds,
+                   ...)
+    params<-append(params , HP_fixed)
     
-    if(cv){
-      model = KT_xgb_cv(train =train,
-                           train_y = train_y,
-                           train_weight =train_weight,
-                           folds=folds,
-                           params = params)$model
-      
-    }
-    else{
-      model = KT_xgb_train(train =train,
-                           train_y = train_y,
-                           train_weight =train_weight,
-                           validate  =validate,
-                           validate_y  = validate_y,
-                           validate_weight = validate_weight,
-                           params = params)$model
+    if (cv) {
+      model <- KT_xgb_cv(train = train,
+                         train_y = train_y,
+                         train_weight = train_weight,
+                         folds = folds,
+                         params = params)$model
+    } else {
+      model <- KT_xgb_train(train = train,
+                            train_y = train_y,
+                            train_weight = train_weight,
+                            validate = validate,
+                            validate_y = validate_y,
+                            validate_weight = validate_weight,
+                            params = params)$model
     }
     
+    best_iteration <- min(which(model$evaluation_log$test_loss == min(model$evaluation_log$test_loss)))
+    validate_loss <- model$evaluation_log[best_iteration, "test_loss"][[1]]
     
-    best_iteration = min(which(model$evaluation_log$test_loss == min(model$evaluation_log$test_loss)))
-    validate_loss <-    model$evaluation_log[best_iteration, "test_loss"][[1]]
+    validate_iter <- paste(model$evaluation_log[["test_loss"]], collapse = ",")
     
-    validate_iter = paste( model$evaluation_log[[ "test_loss"]],collapse = "," )
-    return(list(Score = as.numeric( validate_loss), num_rounds = best_iteration , validate_iter = validate_iter ))
+    return(list(Score = as.numeric(validate_loss), num_rounds = best_iteration, validate_iter = validate_iter))
   }
   
   # Run the Bayesian optimisation
@@ -1137,7 +1169,10 @@ KT_xgb_baysian_tune = function(train ,
                  iters.k = iters.k,
                  parallel =  parallel,
                  verbose = verbose)
-
+  if(parallel){
+    stopCluster(cl)
+    registerDoSEQ()
+  }
   
   tune_iteration = data.frame()
   for (x in  1:nrow(opt_results$scoreSummary)){
@@ -1150,6 +1185,11 @@ KT_xgb_baysian_tune = function(train ,
     tune_iteration = rbind(tune_iteration,test)
     
   }
+  
+
+
+  
+  
   tune_iteration %>% 
     ggplot(.,aes(x=train_iteration , y = validate_loss , colour = BayOpt_iteration, group = BayOpt_iteration))+
     geom_line(lwd = 1.5)  + theme_gray(base_size = 17) -> tune_iteration
@@ -1178,9 +1218,11 @@ KT_xgb_baysian_tune = function(train ,
                 best_params = best_params))
 }
 
-KT_xgb_explain = function(model,  pred_data ,excl ,sample_size = 23000){
+KT_xgb_explain = function(model,  pred_data  ,sample_size = 23000){
   
   pred_data = as.matrix(pred_data)
+  # EIX::interactions(model,pred_data, option = "interactions") -> interaction_gain
+  
   set.seed(33)
   pred_data_main_effect = pred_data[sample(nrow(pred_data),min(nrow(pred_data) , sample_size), replace = F),]
   shap_main_effect =   predict(model, newdata =pred_data_main_effect, predcontrib = TRUE)  %>% as.data.frame()
@@ -1190,14 +1232,36 @@ KT_xgb_explain = function(model,  pred_data ,excl ,sample_size = 23000){
   }
     
   set.seed(33)
-  pred_data_interaction = pred_data[sample(nrow(pred_data),min(nrow(pred_data) , 4000), replace = F),]
+  pred_data_interaction = pred_data[sample(nrow(pred_data),min(nrow(pred_data) , 6000), replace = F),]
   rm(pred_data)
   shap_interaction = data.frame(  predict(model, newdata =pred_data_interaction, predinteraction  = TRUE)) 
+  
+  
+  abs(shap_main_effect ) %>%
+    as.data.frame() %>% 
+    select(-BIAS) %>% 
+    summarise_all(list(sum)) %>%
+    melt() %>% 
+    mutate(pc_contri = value/sum(value)) %>% 
+    arrange(-pc_contri) -> ft_importance
+  ft_importance %>%  
+    filter(pc_contri>0.0001)%>%
+    ggplot(.,aes(x=reorder(variable,+pc_contri) ,y= pc_contri)) +
+    geom_bar(stat = "identity") +coord_flip() + xlab("Features") +
+    ggtitle("SHAP % contribution") +
+    theme_bw() +
+    theme(panel.background = element_blank())-> ft_importance_plot
+
   
   return(list(main_effect = list(pred_data_main_effect=pred_data_main_effect,
                                  shap_main_effect=shap_main_effect) ,
               interaction= list(pred_data_interaction=pred_data_interaction,
-                                shap_interaction=shap_interaction)
+                                shap_interaction=shap_interaction),
+              ft_importance=ft_importance,
+              ft_importance_plot = ft_importance_plot
+              
+              # interaction_gain = interaction_gain,
+              # interaction_gain_plot = plot(interaction_gain)
               ))
   
 }
@@ -1258,7 +1322,7 @@ KT_xgb_explain = function(model,  pred_data ,excl ,sample_size = 23000){
 # exe_path = "C:/Program Files (x86)/Radar_4_21/RadarCommandLine.exe"
 # component_path = "RadarLive_Phoenix1Home.Endcodingmodellingdata.encoded_factor"
 # rdr_path = "H:/Restricted Share/DA P&U/Tech Modelling/01 Home/Phase 2/13. R/Peril Name - Radar Home - Phase2 Modelling WorkFlow  v7.rdr"
-KT_rdr_cmd= function(exe_path="C:/Program Files/Radar_4_23/RadarCommandLine.exe", rdr_path, component_path,use_optimiser = F, stdout=F, stderr = F ){
+KT_rdr_cmd= function(exe_path="C:/Program Files/Radar_4_23/RadarCommandLine.exe", rdr_path, component_path,use_optimiser = F, stdout = "", stderr = F ){
   
   exe_path = glue('&"{exe_path}"')
   rdr_path = glue('"{rdr_path}"')
@@ -1279,7 +1343,8 @@ KT_rdr_cmd= function(exe_path="C:/Program Files/Radar_4_23/RadarCommandLine.exe"
 }
 
 
-KT_rdr_glm_lookup<-function(file_path){
+KT_rdr_glm_lookup<-function(file_path, produce_pdp = F){
+  # options(scipen = 999)
   options(digits=10)
   print("loading glm lookup")
   # options(readxl.show_progress = FALSE)
@@ -1295,12 +1360,13 @@ KT_rdr_glm_lookup<-function(file_path){
   level_list = list()
   interacted_levels = list()
   relativities_list$Base =  as.numeric(names(read.xlsx(file_path,  namedRegion = "Base")))
-  score_cols=names(range_map)[! names(range_map) %in% c("Base" , "Base_1" , "LinkType")]
+  score_cols=names(range_map)[! names(range_map) %in% c("Base" , "Base_1" , "LinkType" , "Formula")]
   pb = txtProgressBar(min = 0, max = length(score_cols), initial = 0 , style = 3)
   i=0
   
   for (x in score_cols){
     i=i+1
+    # print(x)
     cell = range_map[[x]]
     str_split(cell,":") -> cell_split
     
@@ -1308,20 +1374,31 @@ KT_rdr_glm_lookup<-function(file_path){
     paste(cellranger::num_to_letter(cell_address$col-1) ,cell_address$row-1, sep = "") -> newcell
     paste( newcell, cell_split[[1]][2],sep = ":") -> new_range 
     rel = read_xlsx(file_path ,range= new_range ,.name_repair = "unique_quiet") 
+    
+    x = gsub(pattern = "Lookup" , "", x = x)
     if(ncol(rel) <=2){
       names(rel)<-c(x,"value")
     }
+    
+    num_idx  =  which(grepl("^[0-9]+(\\.[0-9]+)?$", as.numeric( rel[[1]]))) # sometimes read_excel reads in scientific notation  so transformation is required
+    if(length(num_idx)>0){
+      suppressMessages(
+      as.character(as.numeric(rel[[1]][num_idx]))  -> rel[[1]][num_idx])
+    }
+    
     colnames(rel)[1]<-x
     lvl =  rel[,x][[1]]
     rel[,x] = factor(rel[,x][[1]],levels =lvl)
     relativities_orig_list[[x]]<-rel
     if(ncol(rel) >2){
-      interacted_levels[[x]] = KT_find_groups_of_identical_columns(rel %>% select(2:ncol(rel)))
+      interacted_levels[[x]] = list(col =  KT_find_groups_of_identical_columns(rel %>% select(2:ncol(rel))),
+                                    row = KT_find_groups_of_identical_columns(rel %>% t %>% janitor::row_to_names(., row_number = 1)   %>% as.data.frame()  ))
       interaction = str_split(x , pattern = "_x_")
       rel %>% melt(id.var = x) -> rel
       names(rel)<- c(interaction[[1]] , "value")
     }
     rel$pred_at_base = rel$value * relativities_list$Base
+    names(rel) <- tolower(names(rel))
     relativities_list[[x]]<- rel
     lkup_keys[[x]] = names(rel)[!names(rel) %in% c("value","pred_at_base")]
     level_list[[x]] <- lvl
@@ -1329,7 +1406,6 @@ KT_rdr_glm_lookup<-function(file_path){
     setTxtProgressBar(pb,i)
     
   }
-  
   
   
   
@@ -1341,25 +1417,106 @@ KT_rdr_glm_lookup<-function(file_path){
     }
     
   }
-  fts = unique(c(unlist(fts) , names(relativities_list)))
+  fts = tolower( unique(c(unlist(fts) , names(relativities_list))))
+  fts=fts[!grepl("_x_" , fts) & fts!= "base"]
+  names(relativities_list) <- tolower(names(relativities_list))
+  names(lkup_keys) <- tolower(names(lkup_keys))
+  names(interacted_levels) <- tolower(names(interacted_levels))
+  names(level_list) <- tolower(names(level_list))
+  
+  
+  # Function to calculate partial dependence
+  calculate_pdp <- function(main_effects, interactions, factor_levels, interaction_levels) {
+    names(main_effects)<- c("factor", "relativity", "pred_base")
+    names(interactions) <-c("main_factor", "interaction_factor" , "relativity" , "pred_base")
+    
+    pdp_values <- numeric(length(factor_levels))
+    
+    for (i in seq_along(factor_levels)) {
+      main_level <- factor_levels[i]
+      main_relativity <- main_effects$relativity[main_effects$factor == main_level]
+      
+      interaction_relativity <- numeric(length(interaction_levels))
+      for (j in seq_along(interaction_levels)) {
+        interaction_level <- interaction_levels[j]
+        interaction_relativity[j] <- interactions$relativity[
+          interactions$main_factor == main_level & interactions$interaction_factor == interaction_level
+        ]
+      }
+      
+      # Average interaction relativities
+      avg_interaction_relativity <- mean(interaction_relativity, na.rm = TRUE)
+      
+      # Calculate partial dependence
+      pdp_values[i] <- main_relativity * avg_interaction_relativity
+    }
+    
+    return(pdp_values)
+  }
+  
+  if ( produce_pdp){
+    # calc PDP accounting for X
+    PDP_list <- relativities_list
+    interactions <-names(PDP_list)[grepl("_x_", names(PDP_list))]
+
+    for (X in interactions){
+      x <- strsplit(X,split = "_x_")[[1]][1]
+      y <- strsplit(X,split = "_x_")[[1]][2]
+      if( !x %in% names(PDP_list)){
+        main_eff <- y
+        contri_eff <-x
+      }else{
+        main_eff <- x
+        contri_eff <- y
+      }
+
+      PDP_list[[X]] %>% select(main_eff,contri_eff,value,pred_at_base )->PDP_list[[X]]
+      pdp <-  data.frame(ft =PDP_list[[main_eff]][[1]],
+                         value =calculate_pdp(main_effects = PDP_list[[main_eff]], interactions = PDP_list[[X]], factor_levels = PDP_list[[main_eff]][[main_eff]] ,interaction_levels = unique(PDP_list[[X]][[contri_eff]] )),
+                         pred_at_base = NA )
+      names(pdp) <- names(PDP_list[[main_eff]] )
+      PDP_list[[main_eff]]  <- rbind(PDP_list[[main_eff]],pdp)
+      PDP_list[[X]] <- NULL
+
+    }
+    PDP_list$base <- NULL
+    lapply(PDP_list, function(x) x[1:2] %>%  group_by(across(1)) %>% summarise(value = mean(value)) ) -> PDP
+    lapply(PDP, function(x) x %>% ggplot(.,aes(x=!!as.name(names(x[1])) , y =!!as.name(names(x[2]))  , group = 1)) +
+             geom_line() +
+             theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9)) ) -> PDP_plots
+  } else
+  {
+    PDP = NULL
+    PDP_plots = NULL
+  }
+
   
   return(list(lookup_table = relativities_list ,
               lookup_table_orig =relativities_orig_list,
               factors = fts,
               factor_lvl = level_list,
               lkup_keys = lkup_keys,
-              interacted_levels=interacted_levels))
+              interacted_levels=interacted_levels ,
+              PDP = list(PDP = PDP,
+                         PDP_plots = PDP_plots)
+              ))
   options(digits=10)
   
 }
 
 
-KT_rdr_glm_predict <- function(glm_model_path, pred_df){
+KT_rdr_glm_predict <- function(model, pred_df , glm_model_path, return_pred_only = F){
   
-  KT_rdr_glm_lookup(glm_model_path) -> model
+  if(!missing(model)){
+    model = model
+  }else{
+    KT_rdr_glm_lookup(glm_model_path) -> model
+  }
+  
+  names(pred_df) <- tolower(names(pred_df) )
   print("Scoring data")
   pred_df %>% select(ends_with(model$factors)) %>% mutate_all(~as.factor(.))->pred_df
-  score_cols = names(model$lookup_table)[names(model$lookup_table) != "Base"]
+  score_cols = names(model$lookup_table)[names(model$lookup_table) != "base"]
   pb = txtProgressBar(min = 0, max = length(score_cols), initial = 0 , style = 3)
   i=0
   for(x in  score_cols){
@@ -1367,24 +1524,69 @@ KT_rdr_glm_predict <- function(glm_model_path, pred_df){
     pred_df[[glue("{x}_relativity")]] = pred_df %>% left_join(model$lookup_table[[x]] , by = model$lkup_keys[[x]]  ) %>% select(value) %>% pull
     setTxtProgressBar(pb,i)
   }
-  pred_df$Base_relativity = model$lookup_table$Base
-  pred_df$R_pred =  apply(pred_df %>% select(ends_with("_relativity" )), 1,prod)
-  return(pred_df)
+  pred_df$base_relativity = model$lookup_table$base
+  pred_df$r_pred =  apply(pred_df %>% select(ends_with("_relativity" )), 1,prod)
+  if (return_pred_only){
+    return(pred_df$r_pred)
+  }else{
+    return(pred_df)
+  }
+  
 }
 
 
-KT_plot_glm_fit <- function( df , xlsx_path, plot_scale = 4000 ){
+KT_rdr_glm_predict_fast <- function(model, pred_df , glm_model_path, return_pred_only = F){
+  
+  if(!missing(model)){
+    model = model
+  }else{
+    KT_rdr_glm_lookup(glm_model_path) -> model
+  }
+  
+  names(pred_df) <- tolower(names(pred_df) )
+  
+  pred_df %>% select(ends_with(model$factors)) %>% mutate_all(~as.factor(.))->pred_df
+  score_cols = names(model$lookup_table)[names(model$lookup_table) != "base"]
+  sapply(score_cols, function(x) pred_df %>% left_join(model$lookup_table[[x]] , by = model$lkup_keys[[x]]  ) %>% select(value) %>% pull ) %>% as.data.table -> relativity
+  names(relativity) <-  paste0(score_cols,"_relativity")
+  relativity$r_pred <- Reduce("*" , relativity) *model$lookup_table$base
+  
+  
+  if (return_pred_only){
+    return( relativity$r_pred)
+  }else{
+    return( relativity)
+  }
+  
+}
+
+KT_rdr_multi_glm_predict<- function(model_list, pred_df , return_pred_only = F){
+  pblapply(model_list, function(x) KT_rdr_glm_predict_fast(model = x , pred_df = pred_df,return_pred_only =return_pred_only ) )
+}
+
+
+
+
+
+
+KT_plot_glm_fit <- function( df , xlsx_path, model, plot_scale = 4000 ){
   # options(warn=-1)
+  if(!missing(model)){
+    model = model
+  }else{
+    KT_rdr_glm_lookup(xlsx_path) -> model
+  }
+  
   print("Processing glm fitted trends")
   # ft = "AD_InsurerCode"
   # xlsx_path = "glm_lookup.xlsx"
   
-  model = KT_rdr_glm_lookup(xlsx_path)
-  KT_plot_glm_rdr_rel(xlsx_path) ->rel_plots
-  KT_rdr_glm_predict(xlsx_path , pred_df = df )-> pred 
-  df$R_pred  = pred$R_pred  
+  KT_plot_glm_rdr_rel(xlsx_path,model = model) ->rel_plots
+  KT_rdr_glm_predict(xlsx_path , pred_df = df, model = model )-> pred 
+  df$r_pred  = pred$r_pred  
   
-  fitted_fts = c(intersect(model$factors , names(df)) , names(rel_plots)[grepl("_x_", names(rel_plots))])
+  fitted_fts = names(model$lookup_table)[!grepl("base" , names(model$lookup_table))]
+  fitted_fts = sort(c(fitted_fts, setdiff(names(rel_plots),fitted_fts)))
   missing_fts= setdiff(model$factors , names(df))
   fit_plots  = list()
   print(glue("{missing_fts} missing"))
@@ -1399,9 +1601,9 @@ KT_plot_glm_fit <- function( df , xlsx_path, plot_scale = 4000 ){
     }else{
       ave_calc = function(sample){
         KT_calc_ave(ft =  df %>% filter(chosendatasplits ==sample ) %>% select(ft) %>% pull , 
-                    actual = df %>% filter(chosendatasplits == sample)  %>% mutate(actual = Response*Weight)%>% select(actual  ) %>% pull,
-                    pred = df %>% filter(chosendatasplits == sample) %>% select(R_pred) %>% pull,
-                    weight =  df %>% filter(chosendatasplits == sample)  %>% select(Weight  ) %>% pull) 
+                    actual = df %>% filter(chosendatasplits == sample)  %>% mutate(actual = response*weight)%>% select(actual  ) %>% pull,
+                    pred = df %>% filter(chosendatasplits == sample) %>% select(r_pred) %>% pull,
+                    weight =  df %>% filter(chosendatasplits == sample)  %>% select(weight  ) %>% pull) 
       }
       ave_calc("Modelling") ->ave_df_modelling
       ave_calc("Validation") ->ave_df_validation
@@ -1472,11 +1674,19 @@ KT_plot_glm_fit <- function( df , xlsx_path, plot_scale = 4000 ){
 }
 
 
-KT_plot_glm_rdr_rel = function(xlsx_path){
-  model = KT_rdr_glm_lookup(xlsx_path)
+
+KT_plot_glm_rdr_rel = function(xlsx_path,model){
+  
+  if(!missing(model)){
+    model = model
+  }else{
+    KT_rdr_glm_lookup(xlsx_path) -> model
+  }
+  
+
   rel_plots = list()
   options(digits = 5)
-  for( rel in names(model$lookup_table)[names(model$lookup_table)!="Base"]){
+  for( rel in names(model$lookup_table)[names(model$lookup_table)!="base"]){
     lookup_table = model$lookup_table[[rel]]
     lookup_table$value =round(lookup_table$value,5)
     if(str_detect(rel,"_x_")){
@@ -1498,17 +1708,107 @@ KT_plot_glm_rdr_rel = function(xlsx_path){
       rel_plots[[glue("{x1}_x_{x2}")]] <- ggplotly(p)
       rel_plots[[glue("{x2}_x_{x1}")]] <- ggplotly( p2)
     } else{
-      rel_plots[[rel]] <- ggplotly( lookup_table %>% ggplot(.,aes(x=!!as.name(rel) , y = value, group = 1))+ 
+      rel_plots[[rel]] <- lookup_table %>% ggplot(.,aes(x=!!as.name(rel) , y = value, group = 1))+ 
                                       geom_line() + 
                                       geom_point() +
+                                      theme_light(base_size = 20) +
                                       theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9) ) +
-                                      ylab("Relativity"))
+                                      ylab("Relativity")
     }
   }
   return(rel_plots)
 }
 
 
+KT_predict_BC <- function(pred_df, glm_lookup , overlays, exposure ){
+  names(pred_df)<- tolower(names(pred_df))
+  
+  
+  ay_rel <- fread("H:/Restricted Share/DA P&U/Tech Modelling/01 Home/Phase 2/09. Technical Modelling/6. Internal Review/Model_analysis/AY_relativity/AY_relativities.csv" ,select = c("Models" , "final_relativity"))
+  insurercode_rel <- fread("H:/Restricted Share/DA P&U/Tech Modelling/01 Home/Phase 2/09. Technical Modelling/6. Internal Review/Model_analysis/AD_InsurerCode/InsurerCode_relativities_NewSuggestedV2_with_commentsAndGraphs.csv" ,select = c("Models" , "final_relativity"))
+  
+  KT_rdr_multi_glm_predict(model_list = glm_lookup, pred_df = pred_df %>% mutate(ad_insurercode =="E",
+                                                                                 ay = "2022",
+                                                                                 co_addonppspecified = 'No',
+                                                                                 co_ppspecifiedvalue = 'Default'), return_pred_only = T) -> pred
+  
+  lapply(names( pred), function(x)  pred[[x]]*pull( ay_rel[Models == x,2][1])  * pull(insurercode_rel[Models == x,2][1]) ) %>% setNames(.,names(pred))  # apply base AY and insurer code adj
+  pos_exposure = ifelse(exposure>0,1,0)
+  buildings_cover = ifelse(pred_df$co_covertype =="Buildings" | pred_df$co_covertype == "Buildings and Contents" ,1,0)
+  contents_cover = ifelse(pred_df$co_covertype =="Contents" | pred_df$co_covertype == "Buildings and Contents"  ,1,0)
+  insurer_excl = ifelse(pred_df$ad_insurercode!= "D" & pred_df$ad_insurercode!= "F" , 1, 0 )
+  addonADB = buildings_cover* ifelse(pred_df$co_addonadb=="Yes",1,0)
+  addonADC = contents_cover* ifelse(pred_df$co_addonadc=="Yes",1,0)
+  unsp_cover_ind = case_when(pred_df$co_addonppunspecified == "Yes" &
+                               pred_df$co_ppunspecifiedvalue != "Default" &
+                               pred_df$co_ppspecifiedvalue == "Default" ~1 ,
+                             T~0)
+  
+  list("AD_B" =addonADB*pos_exposure,
+       "AD_C" =addonADC*pos_exposure,
+       "Unsp_PP"=unsp_cover_ind*contents_cover*pos_exposure,
+       "Flood_B" =insurer_excl*buildings_cover*pos_exposure,
+       "Flood_C" =insurer_excl*contents_cover*pos_exposure,
+       "EOW_B" = buildings_cover*pos_exposure,
+       "EOW_C" = contents_cover*pos_exposure,
+       "Storm_B"= buildings_cover*pos_exposure,
+       "Storm_C" = contents_cover*pos_exposure,
+       "Theft_B"= buildings_cover*pos_exposure,
+       "Theft_C" = contents_cover*pos_exposure,
+       "Fire_B"= buildings_cover*pos_exposure,
+       "Fire_C" = contents_cover*pos_exposure,
+       "Other_B"= buildings_cover*pos_exposure,
+       "Other_C" = contents_cover*pos_exposure,
+       "Subs_B"= buildings_cover*pos_exposure
+       ) -> ind
+  
+  bc_pred_list <- list()
+  for (peril in c("AD" , "EOW" , "Flood" , "Storm" , "Theft" , "Fire"  , "Subs" , "Other")){
+    for (section in c("B",  "C")){
+      model <- glue("{peril}_bc_{section}")
+      bc_pred_list[[model]] <- pred[[glue("{peril}_F_{section}")]]*pred[[glue("{peril}_S_{section}")]] * ind[[glue("{peril}_{section}")]]
+      
+    }
+  }
+  
+  UPPandSP_load = ifelse(pred_df$co_addonppspecified == 'Yes' & pred_df$co_addonppunspecified == 'Yes' , 1.5,1)
+  bc_pred_list[["Unsp_bc_PP"]] <- pred[["Unsp_F_PP"]] * pred[["Unsp_S_PP"]] * ind$Unsp_PP *1.4  *UPPandSP_load #inflate AL UPP as we moving all pp claims out of AD and theft 
+  bc_pred_list[["AD_bc_C"]] <- bc_pred_list[["AD_bc_C"]] *0.96 #moving all pp claims out of AD and theft
+  bc_pred_list[["Theft_bc_C"]] <- bc_pred_list[["Theft_bc_C"]] *0.96 #moving all pp claims out of AD and theft
+  
+  
+  bc_pred_list <- bc_pred_list[names(bc_pred_list)!="Subs_bc_C"]
+  
+  
+  if (missing(overlays)){
+    B_adj=1
+    C_adj=1
+    Pol_adj=1
+  } else{
+
+    KT_rdr_multi_glm_predict(model_list = overlays, pred_df = pred_df %>%
+                               mutate(qt_quotelagfull = ifelse(as.numeric(co_tenure) < 3 & ad_panel=="SW"  ,qt_quotelagfull , "30" ) ,   # tactical deployments
+                                      co_tenure = ifelse(co_covertype == "Contents" & ad_panel=="SW" ,co_tenure , "0" )), return_pred_only = T) -> adj # tactical deployments
+
+    C_adj <- case_when(pred_df$ad_panel=="SW" ~ adj$SWC_Overlays, 
+                       pred_df$ad_panel=="PSL" ~ adj$PSLC_Overlays,
+                       T~1)
+    B_adj <- case_when(pred_df$ad_panel=="PSL" ~ adj$PSL_B_Overlays,
+                       T~1)
+    Pol_adj <- case_when(pred_df$ad_panel=="SW" ~ adj$SWPol_Overlays,
+                         T~1)
+  }
+
+  
+  Reduce("+",bc_pred_list[grepl("_B$" , names(bc_pred_list))])*B_adj*pos_exposure*buildings_cover  -> B_pred_bc
+  Reduce("+",bc_pred_list[grepl("_C$|_PP$" , names(bc_pred_list))])*C_adj*pos_exposure*contents_cover  -> C_pred_bc
+  (B_pred_bc + C_pred_bc )*Pol_adj*pos_exposure -> TOTAL_pred_bc
+  
+  
+  bc_pred_list$TOTAL_pred_bc = TOTAL_pred_bc
+  bc_pred_list$B_pred_bc = B_pred_bc
+  bc_pred_list$C_pred_bc=C_pred_bc
+  return(bc_pred_list) }
 
 
 KT_find_groups_of_identical_columns <- function(df) {
@@ -1539,6 +1839,96 @@ KT_find_groups_of_identical_columns <- function(df) {
   lookup_table = data.table(lookup,value)
   return(lookup_table)
 }
+
+
+
+
+KT_transform_rdr_data <- function(df , fts, target, transform_cat= F){
+  patterns <- c("Default", "default", "DEFAULT", "Unknown", "unknown", "UNKNOWN")
+  replacement <- "ZZZDefault"
+  
+  names(df)<- tolower(names(df))
+  
+  pb = txtProgressBar(min = 0, max = length( c(fts ) ), initial = 0, style = 3)
+  i=0
+  
+  for (col in  c(fts ) ) {
+    i=i+1
+    set(df, j = col, value = ifelse(grepl(paste(patterns, collapse = "|"), df[[col]]), replacement, df[[col]]))
+    setTxtProgressBar(pb,i)
+  }
+  pb = txtProgressBar(min = 0, max = length( c(fts ) ), initial = 0, style = 3)
+  i=0
+  for(x in c(fts ) ){
+    i=i+1
+    lvls = unique(df[[x]]) %>% as.character(.) %>% KT_dym_sort(.)
+    df[[x]] <- factor(df[[x]], levels = lvls)
+    levels(df[[x]])[levels(df[[x]]) =="ZZZDefault"] <- 'Default'
+    setTxtProgressBar(pb,i)
+  }
+  
+  datatype <- fread("H:/Restricted Share/DA P&U/Tech Modelling/01 Home/Phase 2/09. Technical Modelling/99. Report_processing/datatype.csv")
+  
+  datatype %>% mutate(Variable = tolower(Variable)) %>% filter(Variable %in% fts) -> fts_spec
+  
+  num_fts <- fts_spec %>% filter(grepl("Ordered" , datatype)) %>% select(Variable) %>% pull
+  cat_fts <- setdiff(fts_spec$Variable ,num_fts )
+  missing_fts <-setdiff(fts,c(num_fts,cat_fts))
+  print(glue("{missing_fts}  do not exist in datatype.csv")) 
+  
+  if( length(missing_fts)>0){
+    cat_fts<-c(cat_fts, missing_fts)
+  }
+  
+  df %>% rename_at(vars(num_fts) , function(x) paste0("num_",x)) %>%
+    rename_at(vars(cat_fts) , function(x) paste0("cat_",x)) ->  df
+  
+  
+  # target encoding
+  
+  if (transform_cat & !missing(target)){
+    cat_fts = df %>% select(starts_with("cat")) %>% names
+    dicts = list()
+    for(x in cat_fts ){
+      dicts[[x]] <- KT_target_cat_encoding(cat_df = df %>% select(x), 
+                                           target = target )
+      temp <- df %>% select(x) %>% as.data.table()
+      df[[x]] = temp  %>% left_join(dicts[[x]], by = x) %>% select(idx) %>% pull
+    }
+  }else{
+    dicts <- NULL
+  }
+  
+
+  
+  # Label ordered encoding
+  
+  encode_map = list()
+  for(x in paste0("num_",num_fts)  ){
+    encode_map[[x]] <- LabelEncoder.fit(df[[x]])
+    df[[x]] = transform(encode_map[[x]] ,df[[x]])
+  }
+  
+  return(list(df = df %>% select(ends_with(fts)),
+              dicts = dicts,
+              encode_map  = encode_map))
+  
+}
+
+KT_compare_rel <- function(base_model,challenger_model, title){
+  if (missing(title)){
+    title=NULL
+  }
+  
+  fts <- intersect(names(base_model$PDP$PDP) ,names(challenger_model$PDP$PDP) )  
+  fts[fts!="base"]-> fts
+  lapply(fts, function(x) 
+    rbind(base_model$PDP$PDP[[x]] %>% mutate(version = "base" ),
+          challenger_model$PDP$PDP[[x]] %>% mutate(version  =  "challenger")) %>% 
+      ggplot(.,aes(x = !!as.name(x) , y= value  , group = version , color = version)) + geom_line(lwd = 1)  + geom_point(size = 2) +theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9)) + ggtitle(title) ) %>% setNames(.,fts) 
+}
+
+
 ###################################Useful tools###############################
 
 KT_target_cat_encoding  = function(cat_df , target, weight ){
@@ -1768,14 +2158,152 @@ KT_dym_sort <- function(my_vector){
     }
   }
   
-  # Combine the vectors
+
   sorted_vector <- c(starts_with_lt, other_strings)
   
-  # Print the sorted vector
+
   return(sorted_vector)
   
   
 }
+
+
+KT_calc_KNN_inv_lag <- function(postcode , long , lat ,value, knn = 2){
+  df =  data.frame(postcode = postcode,longitude=long , latitude = lat, value=value)%>% distinct(longitude,.keep_all = T) %>% distinct(latitude,.keep_all = T)
+  
+  coords <- cbind(df$longitude,df$latitude)
+  k <- knn2nb(knearneigh(coords, k = knn ) )
+  k.distances <- nbdists(k, coords)
+  invd <- lapply(k.distances, function(x) (1/(x)))
+  
+  
+  row_stand <- function(x){
+    row_sum <- sum(x)
+    scalar <- 1/row_sum
+    x * scalar
+  }
+  
+  row.standw <- lapply(invd, row_stand)
+  invd.weights<-nb2listw(k,glist = row.standw,style = "B")
+  lag = lag.listw(invd.weights,df$value)
+  df$lag = lag
+  return(df)
+}
+
+KT_str <- function(df){str(df, list.len=ncol(df))} 
+
+
+KT_combine_data_frames <- function(...) {
+  # List of data frames
+  data_frames <- list(...)
+  
+  # Find the maximum number of rows among all data frames
+  max_rows <- max(sapply(data_frames, nrow))
+  
+  # Extend each data frame to have the maximum number of rows
+  extended_data_frames <- lapply(data_frames, function(df) {
+    if (nrow(df) < max_rows) {
+      rbind(df, data.frame(matrix(NA, nrow = max_rows - nrow(df), ncol = ncol(df))))
+    } else {
+      df
+    }
+  })
+  
+  # Combine the extended data frames column-wise
+  combined_table <- do.call(cbind, extended_data_frames)
+  
+  return(combined_table)
+}
+
+
+
+
+KT_cat_cluster_glove <-function(vector, n_group  ){
+  # Create a vocabulary and vectorizer
+  it <- itoken(vector, tokenizer = word_tokenizer, progressbar = FALSE ,)
+  vocab <- create_vocabulary(it)
+  vectorizer <- vocab_vectorizer(vocab)
+  
+  # Fit the GloVe model
+  tcm <- create_tcm(it, vectorizer, skip_grams_window = 5)
+  glove <- GlobalVectors$new(rank =100, x_max = 10 , learning_rate = 0.15)
+  wv_main <- glove$fit_transform(tcm, n_iter = 20)
+  wv_context <- glove$components
+  word_vectors <- wv_main + t(wv_context)
+  
+  # Check the dimensions of word_vectors
+  print(dim(word_vectors))
+  
+  # Use t-SNE for dimensionality reduction
+  tsne_model <- Rtsne(word_vectors, dims = 2, perplexity = 5, verbose = TRUE, max_iter = 500)
+  reduced_embeddings <- tsne_model$Y
+  
+  # Check the dimensions of reduced_embeddings
+  print(dim(reduced_embeddings))
+  
+  # Apply K-means clustering
+  set.seed(123)
+  kmeans_result <- kmeans(reduced_embeddings, centers = n_group)
+  clusters <- kmeans_result$cluster
+  
+  # Check the length of clusters
+  print(length(clusters))
+  
+  vocab_clusters <- data.frame(vocab = vocab$term, cluster = clusters, X = reduced_embeddings[,1], Y = reduced_embeddings[,2])
+  
+  
+  # map the vcab back to the original occupation using string dist i.e. how similar occupation is to its vocab
+  similarity_matrix <-  stringdist::stringdistmatrix(vector, vocab_clusters$vocab, method = "jw")
+  best_matches <- apply(similarity_matrix, 1, which.min)
+  matched_details <- vocab_clusters$vocab[best_matches]
+  
+  data.table(vocab  =matched_details ) %>% left_join(vocab_clusters , by = "vocab")  -> vocab_clusters_orig
+  
+  lookup_table <- cbind(data.table(variable = vector) ,vocab_clusters_orig )
+  
+  ggplot(lookup_table, aes(x = X, y = Y, color = as.factor(cluster), label = variable)) +
+    geom_point(size = 1) +
+    # geom_text(vjust = 1.5) +
+    labs(title = "t-SNE Plot of Occupations", x = "t-SNE Dimension 1", y = "t-SNE Dimension 2") +
+    theme_minimal() -> p
+  ggplotly(p)
+  
+  
+  return(list(tsne_plot =ggplotly(p) ,data = lookup_table ))
+}
+
+
+
+
+KT_group_vector_strdist <- function(strings , n_cluster , use_hc = T ){
+  library(stringdist)
+  dist_matrix <- stringdistmatrix(strings, method = "jw")
+  
+  # Perform hierarchical clustering
+  
+  
+  if (use_hc){
+    hc <- hclust(as.dist(dist_matrix), method = "complete")
+    clusters <- cutree(hc, k = n_cluster) 
+  }else{
+    set.seed(123)  # For reproducibility
+    kmeans_result <- kmeans(dist_matrix, centers = 8)  # Adjust the number of clusters as needed
+    clusters <- kmeans_result$cluster
+  }
+  
+  
+  
+  
+  tsne_result <- Rtsne(as.dist(dist_matrix), is_distance = TRUE, perplexity=2,randomstate = 1)
+  tsne_data <- data.frame(tsne_result$Y, cluster = as.factor(clusters) , variable = strings)
+  colnames(tsne_data) <- c("Dim1", "Dim2", "Cluster", "variable")
+  ggplotly( ggplot(tsne_data, aes(x = Dim1, y = Dim2, color = Cluster ,label =variable )) +
+              geom_point(size = 2) +
+              labs(title = "t-SNE Visualization of String Clusters")) -> p
+  
+  return(list(data = tsne_data ,plot = p))
+}
+
 
 ## tab plot example 
 # AVE on unseen data  {.tabset .tabset-pills}
@@ -1798,3 +2326,32 @@ KT_dym_sort <- function(my_vector){
 # pb = txtProgressBar(min = 0, max = n, initial = 0)
 #setTxtProgressBar(pb,iter_i)
 # rename_with(~paste0(.x , "ClaimInd"), matches("c$|b$"))
+
+
+
+######### parallel stuff ###########
+# library(parallel)
+# library(doParallel)
+# cl <- makeCluster(length(model_data_map)+1)
+# clusterEvalQ(cl, {
+#   source("//gmsfile01/data$/Restricted Share/DA P&U/Tech Modelling/Users/Khoa/RPMtools/RPMtools.R")
+#   library(glue )
+# })
+# 
+# 
+# plot_f <- function(m, sample ){
+#   data = dat2[[m]] %>% filter(chosendatasplits  == sample)
+#   KT_plot_lift(n=50,pred = data$PredictedValue , actual =data$Response *data$Weight, weight = data$Weight,nbin = 15,title = glue("{m} lift plot"))$plot$lift_plot  
+# }
+# 
+# plot_list = as.list(c(names(model_data_map),names(model_data_map)))
+# sample_list = as.list(c(rep("Validation" , 9), rep("Modelling",9)))
+# clusterExport(cl = cl , varlist = c("dat2" , "plot_f" , "plot_list" , "sample_list") )
+# 
+# 
+# 
+# parLapplyLB(cl,seq_along(plot_list) , function(i){plot_f(plot_list[[i]] , sample_list[[i]]) }) -> result
+# stopCluster(cl)
+# registerDoSEQ()
+# gc()
+
