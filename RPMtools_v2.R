@@ -134,3 +134,115 @@ KT_calc_dl <- function(actual, weight, base, challenger, nbin) {
     mutate(actual = actual / weight, base = base / weight, challenger = challenger / weight, AvE = actual / base)
   return(df)
 }
+################################ AvE ###################################
+
+# Function: Calculate Actual vs Expected (AvE)
+KT_calc_ave <- function(ft, actual, pred, challenger, weight, rebase = TRUE) {
+  if (missing(ft)) stop("Feature ('ft') is missing.")
+  if (missing(actual) || missing(pred) || missing(weight)) stop("One or more required inputs ('actual', 'pred', 'weight') are missing.")
+  if (any(is.na(c(ft, actual, pred, weight)))) stop("Inputs contain NA values. Please remove or impute them.")
+  
+  if (missing(challenger)) challenger <- pred
+
+  if (rebase) {
+    pred <- pred * (sum(actual) / sum(pred * weight))
+    challenger <- challenger * (sum(actual) / sum(challenger * weight))
+  }
+
+  df <- data.frame(ft, actual, pred, challenger, weight)
+  df <- df %>%
+    mutate(across(c(pred, challenger), ~ .x * weight))  # Apply weights
+  
+  overall <- df %>%
+    summarise(across(c(actual, pred, challenger, weight), sum)) %>%
+    mutate(
+      actual_overall_avg = actual / weight,
+      pred_overall_avg = pred / weight,
+      challenger_overall_avg = challenger / weight
+    )
+  
+  result <- df %>%
+    group_by(ft) %>%
+    summarise(across(c(actual, pred, challenger, weight), sum)) %>%
+    mutate(
+      actual = actual / weight,
+      pred = pred / weight,
+      challenger = challenger / weight,
+      ave = actual / pred,
+      challenger_ave = actual / challenger,
+      actual_overall_avg = overall$actual_overall_avg,
+      pred_overall_avg = overall$pred_overall_avg
+    )
+  
+  return(result)
+}
+
+# Function: Random Fold AvE Consistency
+KT_calc_ave_consistency_random_fold <- function(ft, actual, pred, weight, challenger, nfold = 5, plot_scale = 5000) {
+  if (missing(ft)) stop("Feature ('ft') is missing.")
+  if (nfold <= 0) stop("Number of folds ('nfold') must be a positive integer.")
+  
+  folds <- KT_create_fold_idx(data.frame(ft), nfold)
+  folds[["Full"]] <- unlist(folds) %>% as.vector()
+  AvE_df_list <- list()
+
+  for (fold in names(folds)) {
+    fold_data <- folds[[fold]]
+    AvE_df_list[[fold]] <- KT_calc_ave(ft = ft[fold_data], actual = actual[fold_data], pred = pred[fold_data], weight = weight[fold_data]) %>%
+      mutate(sample = fold)
+  }
+
+  ave_df <- rbindlist(AvE_df_list) %>%
+    mutate(
+      sample = factor(sample, levels = KT_dym_sort(unique(sample))),
+      bar_group = ifelse(grepl("fold", sample), "fold", "full")
+    )
+  
+  p <- ggplotly(
+    ggplot(ave_df, aes(x = ft, group = sample, fill = bar_group)) +
+      geom_hline(yintercept = 1, color = "#39ff14") +
+      geom_line(aes(y = ave, color = sample)) +
+      geom_bar(aes(y = weight / plot_scale), stat = "identity", alpha = 0.4, position = "dodge") +
+      scale_fill_manual(values = c("fold" = "grey", "full" = "orange")) +
+      scale_y_continuous(name = "Actual/Expected", sec.axis = sec_axis(~ . * plot_scale, name = "weight")) +
+      theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust = 0.9)) +
+      ggtitle("AvE Consistency Across Random Folds")
+  )
+  
+  return(list(ave_df = ave_df, ave_plot = p))
+}
+
+# Function: Resample AvE
+KT_resample_ave <- function(n, ft, actual, pred, challenger, weight) {
+  if (n <= 0) stop("Number of resamples ('n') must be a positive integer.")
+  if (missing(challenger)) challenger <- pred
+
+  ave_sim <- list()
+  df <- data.frame(ft, actual, pred, challenger, weight)
+  
+  main_ave <- KT_calc_ave(ft = df$ft, actual = df$actual, pred = df$pred, challenger = df$challenger, weight = df$weight)
+  main_ave$sample <- "main"
+  ave_sim[["iter_0"]] <- main_ave
+
+  for (x in seq_len(n)) {
+    set.seed(x)
+    sampled_df <- df %>% sample_frac(size = 0.3, replace = FALSE)
+    ave_sim[[glue("iter_{x}")]] <- KT_calc_ave(sampled_df$ft, sampled_df$actual, sampled_df$pred, sampled_df$challenger, sampled_df$weight) %>%
+      mutate(sample = x)
+  }
+
+  variables <- list()
+  for (var in c("actual", "pred", "ave", "challenger", "challenger_ave")) {
+    variables[[var]] <- rbindlist(ave_sim) %>%
+      select(ft, !!as.name(var), sample) %>%
+      pivot_wider(names_from = sample, values_from = !!as.name(var)) %>%
+      rowwise() %>%
+      mutate(lb = quantile(c_across(2:(n + 1)), 0.05, na.rm = TRUE),
+             ub = quantile(c_across(2:(n + 1)), 0.95, na.rm = TRUE)) %>%
+      select(ft, main, lb, ub) %>%
+      mutate(variable = var)
+  }
+
+  ave_df <- data.frame(rbindlist(variables), weight = main_ave$weight)
+  return(list(ave_df = ave_df, main_ave = main_ave))
+}
