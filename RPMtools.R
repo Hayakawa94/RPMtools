@@ -62,6 +62,7 @@ library(patchwork)
 library(shiny)
 library(writexl)
 library(shiny.exe)
+library(EIX) # this package has been modified so need to install from local 
 # library(geodaData)
 
 # library(SHAPforxgboost)
@@ -781,7 +782,7 @@ KT_plot_ave = function(n, ft,actual,pred, challenger,weight,factor_name,title,re
 # reticulate::py_run_file("H:\\Restricted Share\\DA P&U\\Tech Modelling\\Users\\Khoa\\RPMtools.py") # Compute SHAP and interactions
 
 # Must compute SHAP using the .py file above before plotting them
-KT_plot_shap = function(sv, ft,ft_name,excl){
+KT_plot_shap = function(sv, ft,ft_name,excl, loess_strength){
   
   if (! missing(excl)){
     df = data.frame(sv,ft) %>%
@@ -791,35 +792,27 @@ KT_plot_shap = function(sv, ft,ft_name,excl){
     df = data.frame(sv,ft)
   }
   
-  if (!is.numeric(ft)){
-    df  %>%
-      arrange(ft) %>%
-      ggplot(.,aes(x=ft, y=sv  )) +geom_point(alpha= 0.3, size = 2, colour = "blue"  , fill = "blue", stroke = NA)+
-      # theme_gray(base_size = 13)+
-      theme_bw() +theme(panel.background = element_blank())+
-      theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9))+
-      xlab(ft_name)+
-      ylab("shap_values")+
-      ggtitle(glue("{ft_name} SHAP trend")) -> p 
-  }else{
-    df  %>%
-      arrange(ft) %>%
-      mutate(lowess = lowess(x = ft,y=sv, f = 1/15)$y)  %>%
-      ggplot(.,aes(x=ft, y=sv  )) +geom_point(alpha= 0.3, size = 2, colour = "blue"  , fill = "blue", stroke = NA)+
-      # theme_gray(base_size = 13)+
-      theme_bw() +theme(panel.background = element_blank())+
-      theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9))+
-      geom_line(aes(x=  ft , y = lowess ),lwd = 1)+
-      xlab(ft_name)+
-      ylab("shap_values")+
-      ggtitle(glue("{ft_name} SHAP trend")) -> p 
+ 
+  df  %>%
+    arrange(ft) %>%
+    ggplot(.,aes(x=ft, y=sv  )) +geom_point(alpha= 0.3, size = 2, colour = "blue"  , fill = "blue", stroke = NA)+
+    # theme_gray(base_size = 13)+
+    theme_bw() +theme(panel.background = element_blank())+
+    theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9))+
+    xlab(ft_name)+
+    ylab("shap_values")+
+    ggtitle(glue("{ft_name} SHAP trend")) -> p 
+  
+  if (!missing(loess_strength)){
+    p+ geom_smooth(aes(y = sv) , span =loess_strength ,  method = "loess", se = F) -> p 
   }
+
   
   return(p)
 }
 
 
-KT_plot_shap_w_interaction =  function(sv, ft,ft_name,excl,interaction){
+KT_plot_shap_w_interaction =  function(sv, ft,ft_name,excl,interaction,loess_strength ){
   if (! missing(excl)){
     df = data.frame(sv,ft) %>%
       filter(! ft %in% excl)
@@ -830,7 +823,7 @@ KT_plot_shap_w_interaction =  function(sv, ft,ft_name,excl,interaction){
   df  %>% 
     group_by(interaction)%>%
     arrange(ft) %>%
-    ggplot(.,aes(x=ft, y=sv  , colour = interaction )) +geom_point( alpha= 0.3, size = 1.5 , stroke = NA)+
+    ggplot(.,aes(x=ft, y=sv  , colour = interaction , group = interaction )) +geom_point( alpha= 0.3, size = 1.5 , stroke = NA)+
     # scale_color_viridis_c()  +
     theme_bw() +theme(panel.background = element_blank())+
     # theme_gray(base_size = 13)+
@@ -838,13 +831,19 @@ KT_plot_shap_w_interaction =  function(sv, ft,ft_name,excl,interaction){
     xlab(ft_name)+
     ylab("shap_values")   ->p
   
-  if(is.numeric(interaction))
-    p = p+scale_color_viridis_c() 
+  # if(is.numeric(interaction))
+  
+  p = p+scale_color_viridis_c() 
+    
+  if (!missing(loess_strength)){
+    p+ geom_smooth(aes(y = sv) , span =loess_strength ,  method = "loess" , se = F) -> p 
+  }
+  
   return(p)
   
 }
 
-KT_plot_compare_shap = function(sv_base,sv_challenger , base_ft, challenger_ft,ft_name){
+KT_plot_compare_shap = function(sv_base,sv_challenger , base_ft, challenger_ft,ft_name , loess_strength){
   
   
   df_base = data.frame(sv=sv_base,ft = base_ft , scenario = "base")
@@ -863,22 +862,11 @@ KT_plot_compare_shap = function(sv_base,sv_challenger , base_ft, challenger_ft,f
       xlab(ft_name)+
       ylab("shap_values")+
       ggtitle(glue("{ft_name} SHAP trend"))-> p}
-  else{
-    df  %>%
-      group_by(scenario) %>%
-      arrange(ft) %>%
-      mutate(lowess = lowess(x = ft,y=sv, f = 1/15)$y)  %>%
-      ggplot(.,aes(x=ft, y=sv , group = scenario, colour = scenario) ) +
-      geom_point(alpha= 0.1, size = 1.5 ,stroke=NA,shape = 21)+
-      # theme_gray(base_size = 13)+
-      theme_bw() +theme(panel.background = element_blank())+
-      theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9))+
-      geom_line(aes(x=  ft , y = lowess , group  = scenario , color  = scenario ),lwd = 1,linetype = 1)+
-      scale_colour_manual(values=c('blue','red'))+
-      xlab(ft_name)+
-      ylab("shap_values")+
-      ggtitle(glue("{ft_name} SHAP trend"))-> p
+  
+  if (!missing(loess_strength)){
+    p+ geom_smooth(aes(y = sv) , span =loess_strength ,  method = "loess" , se = F) -> p 
   }
+
   return(p)
 
 }
@@ -986,7 +974,9 @@ KT_xgb_train <- function(train , # train data including fts only
                          validate_y ,
                          validate_weight,
                          params ,
-                         verbose = 1) {
+                         verbose = 1,
+                         nthread=  max(floor(parallel::detectCores()*2/3),1),
+                         early_stopping_rounds ) {
 
   
   train_mat <- xgb.DMatrix(data = as.matrix(train),
@@ -1000,13 +990,18 @@ KT_xgb_train <- function(train , # train data including fts only
     early_stopping_rounds=NULL
     
   }
-  else{
+  else{ 
+    if (missing(early_stopping_rounds) ){
+    early_stopping_rounds=NULL
+    }else{
+    early_stopping_rounds = early_stopping_rounds
+  }
     
     test_mat <- xgb.DMatrix(data = as.matrix(validate),
                             label = validate_y,
                             weight = validate_weight)
     watchlist = list(train = train_mat, test = test_mat)
-    early_stopping_rounds = 10
+    
   }
   model <- xgb.train(params = params, 
                      data = train_mat, 
@@ -1015,22 +1010,35 @@ KT_xgb_train <- function(train , # train data including fts only
                      print_every_n = 5, 
                      early_stopping_rounds = early_stopping_rounds,
                      maximize = FALSE,
-                     verbose = verbose
-                     # nthread =5
+                     verbose = verbose,
+                     nthread =nthread
                      )
   
   if(missing(validate)){
-    return(list(model= model))
+    names(model$evaluation_log) <- c("iter" , "train_loss" )
+    model$evaluation_log$test_loss <-model$evaluation_log$train_loss 
+    e <- data.frame(model$evaluation_log)
+    
   }
   else{
     names(model$evaluation_log) <- c("iter" , "train_loss" , "test_loss")
-    e <- data.frame(model$evaluation_log)
-    e %>% melt(id.vars = "iter") %>% 
-      ggplot(.,aes(x=iter,y=value,group = variable ,color = variable)) + geom_line(lwd = 3, alpha = 0.5) -> loss_plot
+    e <- data.frame(model$evaluation_log)}
+  
+  e %>% melt(id.vars = "iter") %>%
+    ggplot(.,aes(x=iter,y=value,group = variable ,color = variable)) + geom_line(lwd = 3, alpha = 0.5) -> loss_plot
+    importance_df <- as.data.frame(xgb.importance(model = model))
+    
+    # Plot with ggplot2
+    ggplot(importance_df, aes(x = reorder(Feature, Gain), y = Gain)) +
+      geom_bar(stat = "identity") +
+      coord_flip() +
+      xlab("Feature") +
+      ylab("Gain") +
+      ggtitle("Feature Importance by Gain") -> imp_plot
     # importance <- xgb.importance(model$ft_names, model =model   )
-    return(list( model =model ,loss_plot =loss_plot))
+    return(list( model =model ,loss_plot =loss_plot,imp_plot=imp_plot))
   }
-}
+
 
 
 
@@ -1048,7 +1056,8 @@ KT_xgb_cv <- function(train,
                       train_weight,
                       folds ,
                       params,
-                      verbose =0){
+                      verbose =0,
+                      nthread=  max(floor(parallel::detectCores()*2/3),1)){
   
   train_mat <- xgb.DMatrix(data = as.matrix(train),
                            label = train_y,
@@ -1062,13 +1071,31 @@ KT_xgb_cv <- function(train,
                   early_stopping_rounds = 10,
                   maximize = FALSE,
                   verbose = verbose,
-                  folds = folds)
+                  folds = folds,
+                  nthread =nthread)
                   # nfold = length(folds))
-  names(model$evaluation_log) <- c("iter" , "train_loss" ,"train_std",  "test_loss", "test_std")
+  names(model$evaluation_log) <- c("iter" , "train_loss" ,"train_std",  "mean_test_loss", "test_std")
   e <- data.frame(model$evaluation_log)
-  e %>% select(iter , train_loss, test_loss) %>% melt(id.vars = "iter") %>% 
+  e %>% select(iter , train_loss, mean_test_loss) %>% melt(id.vars = "iter") %>% 
   ggplot(.,aes(x=iter,y=value,group = variable ,color = variable)) + geom_line(lwd = 3, alpha = 0.5) -> loss_plot
-  return(list( model =model ,loss_plot =loss_plot))
+  
+  params$nrounds = nrow(e)
+  model <- KT_xgb_train(train = train,
+                        train_y = train_y,
+                        train_weight = train_weight,
+                         params = params)$model
+               
+  importance_df <- as.data.frame(xgb.importance(model = model))
+  
+  # Plot with ggplot2
+  ggplot(importance_df, aes(x = reorder(Feature, Gain), y = Gain)) +
+    geom_bar(stat = "identity") +
+    coord_flip() +
+    xlab("Feature") +
+    ylab("Gain") +
+    ggtitle("Feature Importance by Gain") -> imp_plot
+  
+  return(list( model =model ,loss_plot =loss_plot, imp_plot = imp_plot))
 }
 
 
@@ -1083,7 +1110,7 @@ KT_xgb_baysian_tune = function(train ,
                                bounds,
                                HP_fixed=list(),
                                nrounds= 400,
-                               monotonicity_constraints,
+                               monotone_constraints,
                                interaction_constraints,
                                objective = "reg:tweedie",
                                eval_metric = "tweedie-nloglik@1.5",
@@ -1100,12 +1127,12 @@ KT_xgb_baysian_tune = function(train ,
   
   if(missing(folds)){
     cv = FALSE
-    cluster_obj <- c('train' , "train_y" , "train_weight", "validate", "validate_y" ,  "validate_weight" , "bounds" , "nrounds" ,"objective", "eval_metric" , "monotonicity_constraints" , "interaction_constraints")
+    cluster_obj <- c('train' , "train_y" , "train_weight", "validate", "validate_y" ,  "validate_weight" , "bounds" , "nrounds" ,"objective", "eval_metric" , "monotone_constraints" , "interaction_constraints")
   }
   else{
     cv= T
     
-    cluster_obj <- c('train' , "train_y" , "train_weight", "bounds" , "nrounds" ,"objective", "eval_metric" ,"folds", "monotonicity_constraints" , "interaction_constraints")
+    cluster_obj <- c('train' , "train_y" , "train_weight", "bounds" , "nrounds" ,"objective", "eval_metric" ,"folds", "monotone_constraints" , "interaction_constraints")
   }
   
   
@@ -1129,7 +1156,7 @@ KT_xgb_baysian_tune = function(train ,
     params <- list(eta = eta,
                    objective = objective,
                    eval_metric = eval_metric,
-                   monotonicity_constraints=monotonicity_constraints,
+                   monotone_constraints=monotone_constraints,
                    interaction_constraints=interaction_constraints,
                    nrounds =nrounds,
                    ...)
@@ -1148,7 +1175,8 @@ KT_xgb_baysian_tune = function(train ,
                             validate = validate,
                             validate_y = validate_y,
                             validate_weight = validate_weight,
-                            params = params)$model
+                            params = params, 
+                            early_stopping_rounds = 5 )$model
     }
     
     best_iteration <- min(which(model$evaluation_log$test_loss == min(model$evaluation_log$test_loss)))
@@ -1209,20 +1237,38 @@ KT_xgb_baysian_tune = function(train ,
   
   opt_results$scoreSummary = opt_results$scoreSummary %>%  rename(nrounds = num_rounds) 
   opt_results$scoreSummary%>% arrange(Score)  %>% head(1) %>% as.list  -> best_params 
+  best_params <- append( append(best_params , 
+                                list(monotone_constraints =monotone_constraints ,
+                                     interaction_constraints=interaction_constraints ) ) ,HP_fixed)
   best_params$objective = objective
   best_params$eval_metric = eval_metric
-  scoreSummary <- opt_results$scoreSummary %>% select(c(HP,"Iteration" , "Score","nrounds") ) %>% arrange(Score)
+  
+  if (length(HP_fixed)>0){
+    for (x in  names(HP_fixed)){
+      opt_results$scoreSummary[[x]] <- HP_fixed[[x]]
+    }
+  }
+  
+  scoreSummary <- opt_results$scoreSummary %>% 
+    select(c(HP,names(HP_fixed),"Iteration" , "Score","nrounds") ) %>% 
+    arrange(Score) %>%
+    mutate(min_child_weight =min_child_weight/length(train_weight) )
+  best_params$min_child_weight<-best_params$min_child_weight/length(train_weight)
   
   return( list( opt_results=scoreSummary  ,
                 hyperparameters_trends=hyperparameters,
                 best_params = best_params))
 }
 
-KT_xgb_explain = function(model,  pred_data  ,sample_size = 23000){
+KT_xgb_explain = function(model,  pred_data  ,sample_size = 6000){
   
   pred_data = as.matrix(pred_data)
-  # EIX::interactions(model,pred_data, option = "interactions") -> interaction_gain
   
+  print("Run importance metric")
+  interactions(xgb_model =  model,data =  pred_data, option = "interactions") -> interaction_gain
+  EIXimportance<-importance(model, pred_data, option = "variables")
+  EIXimportanceX<-importance(model, pred_data, option = "interactions")
+  print("Calculate SHAP")
   set.seed(33)
   pred_data_main_effect = pred_data[sample(nrow(pred_data),min(nrow(pred_data) , sample_size), replace = F),]
   shap_main_effect =   predict(model, newdata =pred_data_main_effect, predcontrib = TRUE)  %>% as.data.frame()
@@ -1232,7 +1278,7 @@ KT_xgb_explain = function(model,  pred_data  ,sample_size = 23000){
   }
     
   set.seed(33)
-  pred_data_interaction = pred_data[sample(nrow(pred_data),min(nrow(pred_data) , 6000), replace = F),]
+  pred_data_interaction = pred_data[sample(nrow(pred_data),min(nrow(pred_data) , sample_size), replace = F),]
   rm(pred_data)
   shap_interaction = data.frame(  predict(model, newdata =pred_data_interaction, predinteraction  = TRUE)) 
   
@@ -1253,14 +1299,18 @@ KT_xgb_explain = function(model,  pred_data  ,sample_size = 23000){
     theme(panel.background = element_blank())-> ft_importance_plot
 
   
+
+  
+  
   return(list(main_effect = list(pred_data_main_effect=pred_data_main_effect,
                                  shap_main_effect=shap_main_effect) ,
               interaction= list(pred_data_interaction=pred_data_interaction,
                                 shap_interaction=shap_interaction),
               ft_importance=ft_importance,
-              ft_importance_plot = ft_importance_plot
-              
-              # interaction_gain = interaction_gain,
+              ft_importance_plot = ft_importance_plot,
+              EIXimportance=EIXimportance,
+              EIXimportanceX=EIXimportanceX,
+              EIXimportance_matrix = interaction_gain
               # interaction_gain_plot = plot(interaction_gain)
               ))
   
