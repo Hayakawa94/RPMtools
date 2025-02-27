@@ -3,7 +3,8 @@ list.of.packages <- c('tidyverse',	'odbc',	'dbplyr',	'data.table',	'CatEncoders'
                       'reticulate',	'ggplot2',	'ParBayesianOptimization',	'mlbench',	'recipes',	
                       'resample',	'xgboost',	'caret',	'Matrix',	'magrittr' ,"data.table", "rmarkdown","pracma",
                       "RColorBrewer","cartogram","tmap","spdep","ggplot2","deldir","sp","purrr","RCurl","DescTools",
-                      "readxl","openxlsx", "fastglm", "janitor", "doParallel","dtplyr","EIX","DALEX" , "pbapply", "patchwork","shiny" , "writexl","shiny.exe")
+                      "readxl","openxlsx", "fastglm", "janitor", "doParallel","dtplyr","EIX","DALEX" , "pbapply", 
+                      "patchwork","shiny" , "writexl","shiny.exe", "Boruta","shinyjs", "SHAPforxgboost", "GGally")
 
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
 
@@ -33,7 +34,7 @@ library(gridExtra)
 library(tidyr)
 library(lubridate)
 library(reshape2)
-library(reticulate)
+# library(reticulate)
 library(ggplot2)
 library(ParBayesianOptimization)
 library(mlbench)
@@ -63,6 +64,11 @@ library(shiny)
 library(writexl)
 library(shiny.exe)
 library(EIX) # this package has been modified so need to install from local 
+library(ggExtra)
+library(Boruta)
+library(shinyjs)
+library(SHAPforxgboost)
+library(GGally)
 # library(geodaData)
 
 # library(SHAPforxgboost)
@@ -234,8 +240,8 @@ KT_plot_lift = function(n , pred, actual ,weight,nbin , title) {
                          ub  =quantile(c_across(3:n+3) , 0.95)) 
   
   ave_plot = lift %>%filter(metric == "ave") %>%
-    ggplot(.,aes(x = bin , y = main , group = metric, fill = metric , col = metric )) + geom_line(size = 1.5) +
-    geom_point(size = 2.8)+
+    ggplot(.,aes(x = bin , y = main , group = metric, fill = metric , col = metric )) + geom_line(size = 0.8) +
+    geom_point(size = 1.3)+
     geom_ribbon(aes(ymin = lb, ymax = ub ), alpha = 0.3  ,  color = NA)+
     scale_colour_manual("", values = c("red", "blue")) +
     scale_fill_manual("", values = c("red", "blue"))+
@@ -244,8 +250,8 @@ KT_plot_lift = function(n , pred, actual ,weight,nbin , title) {
     ggtitle(title)
   
   lift_plot = lift %>%filter(metric != "ave") %>%
-    ggplot(.,aes(x = bin , y = main , group = metric, fill = metric , col = metric)) + geom_line(size = 1.5) +
-    geom_point(size = 2.8)+
+    ggplot(.,aes(x = bin , y = main , group = metric, fill = metric , col = metric)) + geom_line(size = 0.8) +
+    geom_point(size = 1.3)+
     geom_ribbon(aes(ymin = lb, ymax = ub ), alpha = 0.3  ,  color = NA)+
     scale_colour_manual("", values = c("red", "blue")) +
     scale_fill_manual("", values = c("red", "blue"))+
@@ -782,7 +788,11 @@ KT_plot_ave = function(n, ft,actual,pred, challenger,weight,factor_name,title,re
 # reticulate::py_run_file("H:\\Restricted Share\\DA P&U\\Tech Modelling\\Users\\Khoa\\RPMtools.py") # Compute SHAP and interactions
 
 # Must compute SHAP using the .py file above before plotting them
-KT_plot_shap = function(sv, ft,ft_name,excl, loess_strength){
+KT_plot_shap = function(sv, ft,ft_name,excl, loess_strength, point_size = 1.5, alpha = 1 ,  sample_size = 1 ){
+  set.seed(1)
+  data.table(sv  = sv,ft=ft) %>% sample_frac(sample_size) %>% na.omit(.) ->  data
+  sv <- data$sv
+  ft <- data$ft
   
   if (! missing(excl)){
     df = data.frame(sv,ft) %>%
@@ -795,24 +805,32 @@ KT_plot_shap = function(sv, ft,ft_name,excl, loess_strength){
  
   df  %>%
     arrange(ft) %>%
-    ggplot(.,aes(x=ft, y=sv  )) +geom_point(alpha= 0.3, size = 2, colour = "blue"  , fill = "blue", stroke = NA)+
-    # theme_gray(base_size = 13)+
-    theme_bw() +theme(panel.background = element_blank())+
+    ggplot(.,aes(x=ft, y=sv  )) +
+    geom_point(alpha= alpha, size = point_size, colour = "blue"  , fill = "blue")+
+    theme_light(base_size = 16)+
     theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9))+
     xlab(ft_name)+
     ylab("shap_values")+
     ggtitle(glue("{ft_name} SHAP trend")) -> p 
   
-  if (!missing(loess_strength)){
-    p+ geom_smooth(aes(y = sv) , span =loess_strength ,  method = "loess", se = F) -> p 
+  if (loess_strength > 0){
+    p+ geom_smooth(aes(y = sv) , span =loess_strength ,  method = "loess", se = F, color = "red",size = 0.5) -> p 
   }
 
-  
+  p <- ggMarginal(p,type = "densigram", colour = "grey" , fill = "yellow", size = 5)
+  # p <- ggMarginal(p,type = "density")
   return(p)
 }
 
 
-KT_plot_shap_w_interaction =  function(sv, ft,ft_name,excl,interaction,loess_strength ){
+KT_plot_shap_w_interaction =  function(sv, ft,ft_name,excl,interaction,loess_strength=0.5 , point_size = 1.5, alpha = 1, sample_size = 1  ){
+  set.seed(1)
+  data.table(sv  = sv,ft=ft ,interaction=interaction ) %>% sample_frac(sample_size) %>% na.omit(.)  ->  data
+  sv <- data$sv
+  ft <- data$ft
+  interaction <- data$interaction
+  
+  
   if (! missing(excl)){
     df = data.frame(sv,ft) %>%
       filter(! ft %in% excl)
@@ -823,10 +841,9 @@ KT_plot_shap_w_interaction =  function(sv, ft,ft_name,excl,interaction,loess_str
   df  %>% 
     group_by(interaction)%>%
     arrange(ft) %>%
-    ggplot(.,aes(x=ft, y=sv  , colour = interaction , group = interaction )) +geom_point( alpha= 0.3, size = 1.5 , stroke = NA)+
-    # scale_color_viridis_c()  +
-    theme_bw() +theme(panel.background = element_blank())+
-    # theme_gray(base_size = 13)+
+    ggplot(.,aes(x=ft, y=sv  , colour = interaction , group = interaction )) +
+    geom_point( alpha= alpha, size = point_size , stroke = NA)+
+    theme_light(base_size = 16)+
     theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9))+
     xlab(ft_name)+
     ylab("shap_values")   ->p
@@ -835,10 +852,10 @@ KT_plot_shap_w_interaction =  function(sv, ft,ft_name,excl,interaction,loess_str
   
   p = p+scale_color_viridis_c() 
     
-  if (!missing(loess_strength)){
+  if (loess_strength > 0){
     p+ geom_smooth(aes(y = sv) , span =loess_strength ,  method = "loess" , se = F) -> p 
   }
-  
+  p <- ggMarginal(p,type = "histogram",groupColour = TRUE, groupFill = TRUE)
   return(p)
   
 }
@@ -849,19 +866,18 @@ KT_plot_compare_shap = function(sv_base,sv_challenger , base_ft, challenger_ft,f
   df_base = data.frame(sv=sv_base,ft = base_ft , scenario = "base")
   df_challenger = data.frame(sv=sv_challenger,ft = challenger_ft,scenario = "challenger")
   df = rbind(df_base,df_challenger)
-  if (!is.numeric(ft)){
-    df  %>%
-      group_by(scenario) %>%
-      arrange(ft) %>%
-      ggplot(.,aes(x=ft, y=sv , group = scenario, colour = scenario) ) +
-      geom_point(alpha= 0.1, size = 1.5 ,stroke=NA,shape = 21)+
-      # theme_gray(base_size = 13)+
-      theme_bw() +theme(panel.background = element_blank())+
-      theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9))+
-      scale_colour_manual(values=c('blue','red'))+
-      xlab(ft_name)+
-      ylab("shap_values")+
-      ggtitle(glue("{ft_name} SHAP trend"))-> p}
+  df  %>%
+    group_by(scenario) %>%
+    arrange(ft) %>%
+    ggplot(.,aes(x=ft, y=sv , group = scenario, colour = scenario) ) +
+    geom_point(alpha= 0.1, size = 1.5 ,shape = 21)+
+    # theme_gray(base_size = 13)+
+    theme_bw() +theme(panel.background = element_blank())+
+    theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=0.9))+
+    scale_colour_manual(values=c('blue','red'))+
+    xlab(ft_name)+
+    ylab("shap_values")+
+    ggtitle(glue("{ft_name} SHAP trend"))-> p
   
   if (!missing(loess_strength)){
     p+ geom_smooth(aes(y = sv) , span =loess_strength ,  method = "loess" , se = F) -> p 
@@ -976,12 +992,14 @@ KT_xgb_train <- function(train , # train data including fts only
                          params ,
                          verbose = 1,
                          nthread=  max(floor(parallel::detectCores()*2/3),1),
-                         early_stopping_rounds ) {
-
+                         early_stopping_rounds ,
+                         seed = 1) {
+  t0 <- Sys.time()
   
   train_mat <- xgb.DMatrix(data = as.matrix(train),
                            label = train_y,
-                           weight = train_weight)
+                           weight = train_weight,
+                           missing=NA)
   
   
   if(missing(validate)){
@@ -999,10 +1017,12 @@ KT_xgb_train <- function(train , # train data including fts only
     
     test_mat <- xgb.DMatrix(data = as.matrix(validate),
                             label = validate_y,
-                            weight = validate_weight)
+                            weight = validate_weight,
+                            missing = NA)
     watchlist = list(train = train_mat, test = test_mat)
     
   }
+  set.seed(seed)
   model <- xgb.train(params = params, 
                      data = train_mat, 
                      nrounds = params$nrounds, 
@@ -1011,7 +1031,7 @@ KT_xgb_train <- function(train , # train data including fts only
                      early_stopping_rounds = early_stopping_rounds,
                      maximize = FALSE,
                      verbose = verbose,
-                     nthread =nthread
+                     nthread =nthread,
                      )
   
   if(missing(validate)){
@@ -1036,6 +1056,8 @@ KT_xgb_train <- function(train , # train data including fts only
       ylab("Gain") +
       ggtitle("Feature Importance by Gain") -> imp_plot
     # importance <- xgb.importance(model$ft_names, model =model   )
+    
+    print(glue("Train total run time {Sys.time() - t0}")) 
     return(list( model =model ,loss_plot =loss_plot,imp_plot=imp_plot))
   }
 
@@ -1056,13 +1078,14 @@ KT_xgb_cv <- function(train,
                       train_weight,
                       folds ,
                       params,
-                      verbose =0,
+                      verbose =1,
                       nthread=  max(floor(parallel::detectCores()*2/3),1)){
   
   train_mat <- xgb.DMatrix(data = as.matrix(train),
                            label = train_y,
-                           weight = train_weight)
-  
+                           weight = train_weight,
+                           missing = NA)
+  set.seed(1)
   model <- xgb.cv(params = params, 
                   data = train_mat, 
                   nrounds = params$nrounds, 
@@ -1099,6 +1122,39 @@ KT_xgb_cv <- function(train,
 }
 
 
+KT_chooseEfficientParams <- function(numCores, paramSpaceSize) {
+  # Adjust initPoints based on the parameter space size
+  initPoints <- if (paramSpaceSize <= 3) {
+    2 * numCores  # Small space: fewer points needed
+  } else if (paramSpaceSize <= 6) {
+    3 * numCores  # Medium space
+  } else {
+    4 * numCores  # Large space
+  }
+  
+  # Minimize iterations while ensuring sufficient evaluations
+  iters.n <- if (paramSpaceSize <= 3) {
+    numCores * 2  # Small space: 2 batches
+  } else if (paramSpaceSize <= 6) {
+    numCores * 3  # Medium space: 3 batches
+  } else {
+    numCores * 5  # Large space: 5 batches
+  }
+  
+  # Ensure the number of iterations (batches) uses all cores efficiently
+  iters.k <- iters.n / numCores
+  
+  # Return the calculated parameters
+  list(
+    initPoints = initPoints,
+    iters.k = iters.k,
+    iters.n = iters.n
+  )
+}
+
+
+
+
 
 KT_xgb_baysian_tune = function(train ,
                                train_y ,
@@ -1117,13 +1173,13 @@ KT_xgb_baysian_tune = function(train ,
                                parallel = F,
                                iters.k = 1,
                                iters.n = 4,
-                               ncluster  =  max(floor(detectCores()*2/3),1),
+                               ncluster  = max(floor(parallel::detectCores()*2/3),1)+1,
                                initPoints=10,
                                verbose=1){
 
 
   gc()
-  
+  Sys.time() -> t0
   
   if(missing(folds)){
     cv = FALSE
@@ -1137,6 +1193,9 @@ KT_xgb_baysian_tune = function(train ,
   
   
   if(parallel){
+    
+    KT_chooseEfficientParams(numCores =ncluster, paramSpaceSize = length(bounds) ) -> bayes_param
+    
     
     library(doParallel)
     cl <- makeCluster(ncluster)
@@ -1192,9 +1251,9 @@ KT_xgb_baysian_tune = function(train ,
 
   opt_results = bayesOpt(obj_fun, 
                  bounds =bounds , 
-                 initPoints = initPoints, 
-                 iters.n = iters.n,
-                 iters.k = iters.k,
+                 initPoints = bayes_param$initPoints, 
+                 iters.n = bayes_param$iters.n,
+                 iters.k = bayes_param$iters.k,
                  parallel =  parallel,
                  verbose = verbose)
   if(parallel){
@@ -1222,18 +1281,18 @@ KT_xgb_baysian_tune = function(train ,
     ggplot(.,aes(x=train_iteration , y = validate_loss , colour = BayOpt_iteration, group = BayOpt_iteration))+
     geom_line(lwd = 1.5)  + theme_gray(base_size = 17) -> tune_iteration
   
-  hyperparameters = list()
-  hyperparameters[["tune_iteration"]] = tune_iteration
+  # hyperparameters = list()
+  # hyperparameters[["tune_iteration"]] = tune_iteration
   
-  # HP = intersect( c("eta","max_depth", "min_child_weight" , "subsample" , "colsample_bytree", "lambda", "alpha")  , colnames(opt_results$scoreSummary)  )
-  HP = intersect(names(bounds)  , colnames(opt_results$scoreSummary)  )
-  for (x in rev(HP)){
-    hyperparameters[[x]]<- opt_results$scoreSummary %>% 
-      mutate( Iteration = as.factor( Iteration)) %>%
-      ggplot(.,aes(x= !!as.name(x),  y = Score ,  color = Iteration)) + 
-      geom_point(size = 2.5) + 
-      theme_gray(base_size = 17)
-  }
+  HP = intersect( c("eta","max_depth", "min_child_weight" , "subsample" , "colsample_bytree", "lambda", "alpha")  , colnames(opt_results$scoreSummary)  )
+  # HP = intersect(names(bounds)  , colnames(opt_results$scoreSummary)  )
+  # for (x in rev(HP)){
+  #   hyperparameters[[x]]<- opt_results$scoreSummary %>% 
+  #     mutate( Iteration = as.factor( Iteration)) %>%
+  #     ggplot(.,aes(x= !!as.name(x),  y = Score ,  color = Iteration)) + 
+  #     geom_point(size = 2.5) + 
+  #     theme_gray(base_size = 17)
+  # }
   
   opt_results$scoreSummary = opt_results$scoreSummary %>%  rename(nrounds = num_rounds) 
   opt_results$scoreSummary%>% arrange(Score)  %>% head(1) %>% as.list  -> best_params 
@@ -1255,12 +1314,17 @@ KT_xgb_baysian_tune = function(train ,
     mutate(min_child_weight =min_child_weight/length(train_weight) )
   best_params$min_child_weight<-best_params$min_child_weight/length(train_weight)
   
+  lapply(scoreSummary, function(x) data.table::data.table(value= x , iteration = factor( scoreSummary$Iteration) , score = scoreSummary$Score) %>% 
+           ggplot(.,aes(x = value , y = score , group = iteration, color = iteration )  ) + geom_point(size = 2) + theme_light(base_size = 18) ) %>% 
+    setNames(.,names(scoreSummary))  -> hyperparameters_trends
+  
+  print(glue("Tune total run time {Sys.time() - t0}")) 
   return( list( opt_results=scoreSummary  ,
-                hyperparameters_trends=hyperparameters,
+                hyperparameters_trends=append( hyperparameters_trends, list(tune_iteration =tune_iteration )),
                 best_params = best_params))
 }
 
-KT_xgb_explain = function(model,  pred_data  ,sample_size = 6000){
+KT_xgb_explain = function(model,  pred_data  ,sample_size = 12000){
   
   pred_data = as.matrix(pred_data)
   
@@ -1281,8 +1345,7 @@ KT_xgb_explain = function(model,  pred_data  ,sample_size = 6000){
   pred_data_interaction = pred_data[sample(nrow(pred_data),min(nrow(pred_data) , sample_size), replace = F),]
   rm(pred_data)
   shap_interaction = data.frame(  predict(model, newdata =pred_data_interaction, predinteraction  = TRUE)) 
-  
-  
+ 
   abs(shap_main_effect ) %>%
     as.data.frame() %>% 
     select(-BIAS) %>% 
@@ -1298,8 +1361,21 @@ KT_xgb_explain = function(model,  pred_data  ,sample_size = 6000){
     theme_bw() +
     theme(panel.background = element_blank())-> ft_importance_plot
 
-  
-
+  # browser()
+  abs(shap_interaction) %>% 
+    summarise_all(list(sum)) %>% 
+    melt() %>%
+    separate_wider_delim(variable, ".", names = c("x1", "x2"), too_many = "drop") %>% 
+    filter(x1 != x2 & value > 0) %>% 
+    arrange(-value) %>%
+    mutate(value = round(value, 3)) %>%
+    distinct(value, .keep_all = TRUE) %>% 
+    pivot_wider(names_from = x1, values_from = value) %>% 
+    as.data.table() %>% 
+    melt() %>% 
+    filter(!is.na(value)) %>% 
+    rename(ft = x2, interaction = variable) %>%
+    arrange(-value)-> X_importance
   
   
   return(list(main_effect = list(pred_data_main_effect=pred_data_main_effect,
@@ -1307,11 +1383,12 @@ KT_xgb_explain = function(model,  pred_data  ,sample_size = 6000){
               interaction= list(pred_data_interaction=pred_data_interaction,
                                 shap_interaction=shap_interaction),
               ft_importance=ft_importance,
+              ft_importance_X = X_importance,
               ft_importance_plot = ft_importance_plot,
               EIXimportance=EIXimportance,
               EIXimportanceX=EIXimportanceX,
               EIXimportance_matrix = interaction_gain
-              # interaction_gain_plot = plot(interaction_gain)
+              
               ))
   
 }
@@ -1319,54 +1396,89 @@ KT_xgb_explain = function(model,  pred_data  ,sample_size = 6000){
 
 
 
-#################### Boruta feature selection #####################################
+KT_Boruta <- function(train , train_y , weight, max_Runs =100,eval_metric='gamma-nloglik',objective="reg:gamma",
+                      nrounds=199,max.depth=3,eta=0.1,
+                      early_stopping_rounds = 5,
+                      nthread=max(floor(parallel::detectCores()*2/3),1),
+                      file_name
+){
+  
+  Sys.time()-> t0
+  params = list(max.depth=max.depth,
+                eta=eta,
+          
+                eval_metric=eval_metric,
+                objective = objective,
+                tree_method="hist",
+                
+                nrounds = nrounds)
+  set.seed(1)
+  xgb.boruta=Boruta(x= train,
+                    y=train_y,
+                    weight = weight,
+                    maxRuns=max_Runs,
+                    doTrace=2,
+                    nrounds = params$nrounds,
+                    holdHistory=TRUE,
+                    getImp=getImpXgboost,
+                    nthread=nthread,
+                    max.depth=params$max.depth,
+                    eta=params$eta,
+                    eval_metric=eval_metric,
+                    objective = objective,
+                    tree_method="hist",
+                    early_stopping_rounds = 5 ,
+                    missing = NA)
+  
+  boruta_dec=attStats(xgb.boruta)
+ 
+  # browser()
+  print("gc here")
+  gc()
+  
+  imp_features=row.names(boruta_dec)[which(boruta_dec$decision!="Rejected")]
+  # imp_features=row.names(boruta_dec)
+  boruta.imp.df=as.data.frame(xgb.boruta$ImpHistory)
+  
+  boruta.imp.df=boruta.imp.df[,names(boruta.imp.df)%in%imp_features]
+  
+  boruta.imp.df=melt(boruta.imp.df)
+  
+  boruta.imp.df=cbind.data.frame(boruta.imp.df,
+                                 decision=boruta_dec$decision[match(boruta.imp.df$variable,
+                                                                    row.names(boruta_dec))])
+  
+  feature_order=with(boruta.imp.df, reorder(variable, value, median, order = TRUE))
+  boruta.imp.df$variable=factor(boruta.imp.df$variable, levels = levels(feature_order)) 
+  
+  boruta.imp.df %>% ggplot(.,aes(y = variable ,  x = value , fill =  decision )) +
+    geom_boxplot()+theme_light(base_size = 18) + theme(legend.position = "bottom") ->Boruta_p
+  
+  Boruta_p$data %>% group_by(variable) %>% summarise(gain = mean(value)) %>% arrange(-gain) %>% select(variable) %>% pull -> shap.feat
+  KT_xgb_train(train= train %>% select(shap.feat) ,
+               train_y = train_y,
+               train_weight = weight,
+               params = params,
+               early_stopping_rounds =early_stopping_rounds,
+               nthread = nthread )$model -> model
+  
+  
+  
+  shap_sample <- train  %>% sample_n(min(nrow(train) , 10000)) %>% select(model$feature_names)
+  sv <- shap.values(xgb_model =model ,X_train = as.matrix( shap_sample))
+  sapply(sv$shap_score , function(x) KT_quantile_clip(x,0.01,0.99)) %>% as.data.table() ->sv
+  shap.plot.summary.wrap2(shap_score = sv, 
+                          X = shap_sample,
+                          dilute=20)  + theme_light(base_size = 18) + theme(legend.position = "top") -> SHAP_imp_plot
+  
+  list(Boruta_p=Boruta_p , 
+       SHAP_imp_plot=SHAP_imp_plot, 
+       selected_fts = shap.feat     ) -> boruta_result
 
-# library(Boruta)
-# 
-# xgb.boruta=Boruta(train,
-#                   y=train_y[[1]],
-#                   maxRuns=12, 
-#                   doTrace=2,
-#                   holdHistory=TRUE,
-#                   getImp=getImpXgboost,
-#                   max.depth=model$params$max_depth, 
-#                   eta=model$params$eta, 
-#                   nthread=4, 
-#                   min_child_weight=model$params$min_child_weight,
-#                   eval_metric=model$params$eval_metric, 
-#                   nrounds=model$params$nrounds, 
-#                   objective = model$params$objective,
-#                   tree_method="hist",
-#                   subsample = model$params$subsample,
-#                   colsample_bytree = model$params$colsample_bytree,
-#                   alpha = model$params$alpha
-#                   
-#                   
-# )
-# 
-# 
-# boruta_dec=attStats(xgb.boruta)
-# 
-# #get the names of each feature
-# imp_features=row.names(boruta_dec)[which(boruta_dec$decision!="Rejected")]
-# #get feature importance history
-# boruta.imp.df=as.data.frame(xgb.boruta$ImpHistory)
-# #keep only confirmed and tentative features
-# boruta.imp.df=boruta.imp.df[,names(boruta.imp.df)%in%imp_features]
-# #transform the data to a data frame with two columns: feature and importance value
-# boruta.imp.df=melt(boruta.imp.df)
-# #create a data frame by adding the decision for each feature as well
-# boruta.imp.df=cbind.data.frame(boruta.imp.df, 
-#                                decision=boruta_dec$decision[match(boruta.imp.df$variable, 
-#                                                                   row.names(boruta_dec))])
-# #reorder features data frame by the importance median value
-# feature_order=with(boruta.imp.df, reorder(variable, value, median, order = TRUE))
-# boruta.imp.df$variable=factor(boruta.imp.df$variable, levels = levels(feature_order))
-# 
-# boruta.imp.df %>% ggplot(.,aes(y = variable ,  x = value , fill =  decision )) + geom_boxplot() + theme(legend.background = "bottom") +theme_gray(base_size = 25)
-
-
-#############################################################################################################
+  print(glue("Boruta total run time {Sys.time() - t0}")) 
+  
+  return(boruta_result)
+}
 
 ############# RDR stuff ##########################
 # exe_path = "C:/Program Files (x86)/Radar_4_21/RadarCommandLine.exe"
@@ -1409,7 +1521,7 @@ KT_rdr_glm_lookup<-function(file_path, produce_pdp = F){
   lkup_keys = list()
   level_list = list()
   interacted_levels = list()
-  relativities_list$Base =  as.numeric(names(read.xlsx(file_path,  namedRegion = "Base")))
+  relativities_list$Base = as.numeric(names(read.xlsx(file_path,  namedRegion = "Base")))
   score_cols=names(range_map)[! names(range_map) %in% c("Base" , "Base_1" , "LinkType" , "Formula")]
   pb = txtProgressBar(min = 0, max = length(score_cols), initial = 0 , style = 3)
   i=0
@@ -2153,7 +2265,7 @@ KT_get_unique_values_in_each_col = function(df, max_level = 10){
     tail_sample <-rbind(tail_sample,temp_tail_sample)
 
   }
-  return(list(rand_sample=rand_sample,head_sample=head_sample, tail_sample=tail_sample))
+  return(rand_sample)
 
 }
 
@@ -2354,7 +2466,76 @@ KT_group_vector_strdist <- function(strings , n_cluster , use_hc = T ){
   return(list(data = tsne_data ,plot = p))
 }
 
+KT_plot_top_n_correlation <- function(df, n) {
+  # Calculate the correlation matrix
+  corr <- cor(df, use = "complete.obs")
+  
+  # Convert the correlation matrix to a long format
+  corr_long <- as.data.frame(as.table(corr))
+  
+  # Filter the top n correlations (excluding self-correlations)
+  top_n_corr <- corr_long %>%
+    filter(Var1 != Var2) %>%
+    arrange(desc(abs(Freq))) %>%
+    head(n)
+  
+  # Get the unique features in the top n correlations
+  top_features <- unique(c(top_n_corr$Var1, top_n_corr$Var2))
+  
+  # Filter the correlation matrix to include only the top features
+  top_n_matrix <- corr[top_features, top_features]
+  
+  # Convert the matrix to a data frame for plotly
+  top_n_df <- as.data.frame(as.table(top_n_matrix))
+  
+  # Plot the correlation matrix using plotly
+  plot_ly(
+    x = colnames(top_n_matrix),
+    y = rownames(top_n_matrix),
+    z = top_n_matrix,
+    type = "heatmap",
+    colorscale = "RdBu",
+    zmin = -1,
+    zmax = 1,
+    showscale = TRUE
+  ) %>%
+    layout(
+      title = "Top N Correlations",
+      xaxis = list(title = ""),
+      yaxis = list(title = "")
+    )
+}
 
+KT_plot_compare_ft_imp <- function(a, b) {
+  # Find common elements
+  common_elements <- intersect(a, b)
+  
+  # Create data frames for plotting
+  df1 <- data.frame(Element = a, Rank = 1:length(a), Vector = "Base")
+  df2 <- data.frame(Element = b, Rank = 1:length(b), Vector = "Challenger")
+  
+  # Combine data frames
+  df <- bind_rows(df1, df2)
+  
+  # Create a data frame for the segments
+  segments <- df1 %>%
+    filter(Element %in% common_elements) %>%
+    inner_join(df2 %>% filter(Element %in% common_elements), by = "Element", suffix = c(".1", ".2"))
+  
+  # Plot using ggplot2
+  ggplot(df, aes(x = Vector, y = Rank, label = Element)) +
+    geom_point(aes(color = Vector), size = 3) +
+    geom_text(data = df %>% filter(Vector == "Base"), hjust = 1.5, vjust = 0.5) +  # Adjust labels for Base
+    geom_text(data = df %>% filter(Vector == "Challenger"), hjust = -0.5, vjust = 0.5) +  # Adjust labels for Challenger
+    geom_segment(data = segments,
+                 aes(x = "Base", xend = "Challenger",
+                     y = Rank.1, yend = Rank.2),
+                 color = "black") +
+    theme_minimal() +
+    labs(title = "Base vs Challenger importance rank",
+         x = "",
+         y = "Rank")
+}
 ## tab plot example 
 # AVE on unseen data  {.tabset .tabset-pills}
 # ```{r , include=F}
@@ -2404,4 +2585,168 @@ KT_group_vector_strdist <- function(strings , n_cluster , use_hc = T ){
 # stopCluster(cl)
 # registerDoSEQ()
 # gc()
+map_alphabet_to_numbers <- function(alphabet_vector) {
+  # Create a named vector with letters as names and their positions as values
+  alphabet_mapping <- setNames(1:26, LETTERS)
+  
+  # Map the input vector to their corresponding numbers and return as a vector
+  result <- unname(sapply(alphabet_vector, function(letter) alphabet_mapping[letter]))
+  
+  return(result)
+}
+# install.packages("GGally")
+# install.packages("factoextra")
+# install.packages("FactoMineR")
+library(factoextra)
+library(FactoMineR)
 
+
+KT_perform_pca <- function(dataframe, n_components) {
+  # Load necessary libraries
+  library(ggplot2)
+  library(reshape2)
+  library(factoextra)
+  
+  # Perform PCA
+  pca <- prcomp(dataframe, scale. = TRUE)
+  
+  # Create a DataFrame with the principal components
+  principal_df <- as.data.frame(pca$x[, 1:n_components])
+  colnames(principal_df) <- paste0("PC", 1:n_components)
+  
+  # Explained variance ratio
+  explained_variance_ratio <- pca$sdev^2 / sum(pca$sdev^2)
+  
+  # Cumulative explained variance
+  cumulative_explained_variance <- cumsum(explained_variance_ratio)
+  
+  # Scree plot
+  scree_data <- data.frame(
+    PC = 1:length(explained_variance_ratio),
+    ExplainedVariance = explained_variance_ratio,
+    CumulativeVariance = cumulative_explained_variance
+  )
+  
+  ggplot(scree_data, aes(x = PC)) +
+    geom_line(aes(y = ExplainedVariance, color = "Individual explained variance")) +
+    geom_point(aes(y = ExplainedVariance, color = "Individual explained variance")) +
+    geom_line(aes(y = CumulativeVariance, color = "Cumulative explained variance")) +
+    geom_point(aes(y = CumulativeVariance, color = "Cumulative explained variance")) +
+    labs(title = "Scree Plot", x = "Principal Component", y = "Variance Explained") +
+    scale_color_manual(values = c("blue", "red")) +
+    theme_minimal()->scree_plot
+  
+  # Pairplot of the principal components
+  principal_df_melt <- melt(principal_df)
+  ggplot(principal_df_melt, aes(x = value)) +
+    geom_density(aes(fill = variable), alpha = 0.5) +
+    facet_wrap(~variable, scales = "free") +
+    labs(title = "Density Plot of Principal Components") +
+    theme_minimal() ->pair_plot
+  
+  # Biplot
+  fviz_pca_biplot(pca, repel = TRUE, col.var = "blue", col.ind = "red") +
+    labs(title = "Biplot of Principal Components") -> bi_plot
+  
+  return(list(principal_df = principal_df,
+              scree_data = scree_data,
+              pair_plot=pair_plot,
+              scree_plot=scree_plot,
+              bi_plot=bi_plot,
+              pca = pca))
+}
+
+KT_custom_round <- function(x, digits = 2) {
+  if (abs(x) < 1) {
+    return(signif(x, digits))
+  } else {
+    return(round(x , digits))
+  }
+}
+KT_calculate_mode <- function(vec) {
+  vec <- vec[!is.na(vec) & !is.infinite(vec)]  # Remove NA and Inf values
+  uniq_vals <- unique(vec)
+  uniq_vals[which.max(tabulate(match(vec, uniq_vals)))]
+}
+
+KT_band_data <- function(x, nbreaks = 100, method = c("equal", "quantile")) {
+  method <- match.arg(method)
+  
+  min_val <- min(x, na.rm = TRUE)
+  max_val <- max(x, na.rm = TRUE)
+  
+  x <- pmin(pmax(x, min_val), max_val)
+  
+  if (method == "equal") {
+    breaks <- seq(min_val, max_val, length.out = nbreaks + 1)
+  } else if (method == "quantile") {
+    breaks <- unique(quantile(x, probs = seq(0, 1, length.out = nbreaks + 1), na.rm = TRUE))
+  }
+  
+  if (is.integer(x)) {
+    breaks <- round(breaks)
+    breaks <- unique(breaks) 
+  }
+  
+  labels <- paste0("(", formatC(head(breaks, -1), format = "f", digits = 3), ",", formatC(tail(breaks, -1), format = "f", digits = 3), "]")
+  
+  return(cut(x, breaks = breaks, labels = labels, include.lowest = TRUE))
+  gc()
+}
+
+KT_Export_tables_to_pmml <- function(tables_list,prefix) {
+  # Load necessary libraries
+  if (!requireNamespace("r2pmml", quietly = TRUE)) {
+    stop("Package 'r2pmml' is required but not installed.")
+  }
+  if (!requireNamespace("stats", quietly = TRUE)) {
+    stop("Package 'stats' is required but not installed.")
+  }
+  
+  for (table_name in names(tables_list)) {
+    table <- tables_list[[table_name]]
+    
+    # Ensure the levels of each factor are in the same order as the input table
+    for (col_name in names(table)) {
+      if (is.factor(table[[col_name]])) {
+        table[[col_name]] <- factor(table[[col_name]], levels = unique(table[[col_name]]))
+      }
+    }
+    
+    formula <- as.formula(paste("relativity ~", table_name, "- 1"))
+    
+    # Create a simple model using the lookup table with intercept set to 0
+    model <- tryCatch({
+      lm(formula, data = table)  # The '- 1' removes the default intercept and sets it to 0
+    }, error = function(e) {
+      message("Error in creating model for table: ", table_name, "\n", e)
+      return(NULL)
+    })
+    
+    if (!is.null(model)) {
+      # Export the PMML model to a file
+      file_name <- paste0(prefix,"_",table_name, ".pmml")
+      tryCatch({
+        r2pmml::r2pmml(model, file_name)
+        message("Successfully exported PMML for table: ", table_name)
+      }, error = function(e) {
+        message("Error in exporting PMML for table: ", table_name, "\n", e)
+      })
+    }
+  }
+}
+
+
+# Function to return the imputed value (mode)
+# KT_impute_mode_value <- function(vec) {
+#   if (any(is.na(vec))) {
+#     mode_value <- KT_calculate_mode(vec)
+#     return(mode_value)
+#   } else {
+#     return(NULL)  # No missing values to impute
+#   }
+
+# Example usage:
+# df <- read.csv('your_data.csv')
+# result <- perform_pca(df, n_components = 3)
+# print(result$principal_components)
